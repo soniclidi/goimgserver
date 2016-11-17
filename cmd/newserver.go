@@ -1,13 +1,36 @@
 package main
 
+
+/*
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <string.h>
+#include <errno.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include "shared_func.h"
+#include "tracker_types.h"
+#include "tracker_proto.h"
+#include "tracker_client.h"
+#include "storage_client.h"
+#include "storage_client1.h"
+#include "client_func.h"
+#include "client_global.h"
+
+#cgo CFLAGS: -I/usr/include/fastcommon -I/usr/include/fastdfs
+#cgo LDFLAGS: -L/usr/lib64 -lpthread -lfastcommon -lfdfsclient
+*/
+import "C"
+
 import (
     "fmt"
     "os"
     "log"
     "io"
     "net/http"
-    "github.com/gin-gonic/gin"
     "html/template"
+    "github.com/gin-gonic/gin"
 )
 
 func main() {
@@ -33,11 +56,10 @@ func main() {
             log.Fatal(err)
         }
 
-        c.JSON(http.StatusOK, gin.H{"fileid": "i am a fileid", "key": "i am a key",})
-    })
+        result := C.fdfs_client_init("/etc/fdfs/client.conf")
+        fmt.Println("fdfs client init result is", int(result))
 
-    router.GET("/test", func(c *gin.Context) {
-        c.File("./hehe.png")
+        c.JSON(http.StatusOK, gin.H{"fileid": "i am a fileid", "key": "i am a key",})
     })
 
     router.Run(":8080")
