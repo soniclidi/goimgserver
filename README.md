@@ -1,2 +1,2 @@
 # goimgserver
-Tiny golang image server, using FastDFS for image file storage.
+Tiny golang image server, using FastDFS as image file storage.
