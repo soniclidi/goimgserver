@@ -41,8 +41,6 @@ int fdfs_upload_file(char *conf_filename, char *local_filename)
 	ConnectionInfo storageServer;
 	//char file_id[128];
 
-
-	conf_filename = argv[1];
 	if ((result=fdfs_client_init(conf_filename)) != 0)
 	{
 		return result;
@@ -109,7 +107,7 @@ func main() {
         result := int(C.fdfs_upload_file(confstr, localstr))
 
         if result == 0 {
-            fmt.Println("file id is", C.GoString(C.file_id))
+            fmt.Println("file id is", C.GoString(&C.file_id[0]))
             c.JSON(http.StatusOK, gin.H{"result": "success", "file_id": "i am a file id", "key": "i am a key",})
         } else {
             c.JSON(http.StatusOK, gin.H{"result": "fail",})
