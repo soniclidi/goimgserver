@@ -10,6 +10,8 @@ import (
     "html/template"
     "github.com/gin-gonic/gin"
     "unsafe"
+    "io/ioutil"
+    "path"
 )
 
 /*
@@ -32,7 +34,7 @@ import (
 
 char file_id[128];
 
-int fdfs_upload_file(char *conf_filename, char *local_filename)
+int fdfs_upload_file(char *conf_filename, char *filebuff, int64_t filesize, char *extname)
 {
 	char group_name[FDFS_GROUP_NAME_MAX_LEN + 1];
 	ConnectionInfo *pTrackerServer;
@@ -61,9 +63,13 @@ int fdfs_upload_file(char *conf_filename, char *local_filename)
 		return result;
 	}
 
-	result = storage_upload_by_filename1(pTrackerServer, \
+	//result = storage_upload_by_filename1(pTrackerServer, \
+	//		&storageServer, store_path_index, \
+	//		local_filename, NULL, \
+	//		NULL, 0, group_name, file_id);
+	result = storage_upload_by_filebuff1(pTrackerServer, \
 			&storageServer, store_path_index, \
-			local_filename, NULL, \
+			filebuff, filesize, extname, \
 			NULL, 0, group_name, file_id);
 
 	tracker_disconnect_server_ex(pTrackerServer, true);
@@ -90,21 +96,17 @@ func main() {
         file, header, err := c.Request.FormFile("file")
         fmt.Println(header.Filename)
         filename := header.Filename
-        out, err := os.Create("./test/" + filename)
-        if err != nil {
-            log.Fatal(err)
-        }
-        defer out.Close()
-        _, err = io.Copy(out, file)
+
+        buff,err := ioutil.ReadAll(file)
         if err != nil {
             log.Fatal(err)
         }
 
         confstr := C.CString("/etc/fdfs/client.conf")
         defer C.free(unsafe.Pointer(confstr))
-        localstr := C.CString("./test/" + filename)
-        defer C.free(unsafe.Pointer(localstr))
-        result := int(C.fdfs_upload_file(confstr, localstr))
+        extstr := C.CString(path.Ext(filename))
+        defer C.free(unsafe.Pointer(extstr))
+        result := int(C.fdfs_upload_file(confstr, (*C.char)(unsafe.Pointer(&buff[0])), C.int64_t(len(buff)), extstr))
 
         if result == 0 {
             fmt.Println("file id is", C.GoString(&C.file_id[0]))
