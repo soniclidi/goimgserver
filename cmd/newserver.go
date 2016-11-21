@@ -3,15 +3,14 @@ package main
 
 import (
     "fmt"
-    "os"
     "log"
-    "io"
     "net/http"
     "html/template"
     "github.com/gin-gonic/gin"
     "unsafe"
     "io/ioutil"
     "path"
+    "strconv"
 )
 
 /*
@@ -78,6 +77,43 @@ int fdfs_upload_file(char *conf_filename, char *filebuff, int64_t filesize, char
 	return result;
 }
 
+
+int fdfs_download_file(char *conf_filename, char *file_id, char *filebuff, int64_t *filesize)
+{
+	ConnectionInfo *pTrackerServer;
+	int result;
+	//char file_id[128];
+	int64_t file_size;
+	int64_t file_offset;
+	int64_t download_bytes;
+
+	if ((result=fdfs_client_init(conf_filename)) != 0)
+	{
+		return result;
+	}
+
+	pTrackerServer = tracker_get_connection();
+	if (pTrackerServer == NULL)
+	{
+		fdfs_client_destroy();
+		return errno != 0 ? errno : ECONNREFUSED;
+	}
+
+	file_offset = 0;
+	download_bytes = 0;
+
+	result = storage_do_download_file1_ex(pTrackerServer, \
+                NULL, FDFS_DOWNLOAD_TO_BUFF, file_id, \
+                file_offset, download_bytes, \
+                &local_filename, NULL, file_size);
+
+	tracker_disconnect_server_ex(pTrackerServer, true);
+	fdfs_client_destroy();
+
+	return result;
+}
+
+
 #cgo CFLAGS: -I/usr/include/fastcommon -I/usr/include/fastdfs
 #cgo LDFLAGS: -L/usr/lib64 -lpthread -lfastcommon -lfdfsclient
 */
@@ -104,18 +140,42 @@ func main() {
 
         confstr := C.CString("/etc/fdfs/client.conf")
         defer C.free(unsafe.Pointer(confstr))
-        extstr := C.CString(path.Ext(filename))
+        extstr := C.CString(path.Ext(filename)[1:])
         defer C.free(unsafe.Pointer(extstr))
-        result := int(C.fdfs_upload_file(confstr, (*C.char)(unsafe.Pointer(&buff[0])), C.int64_t(len(buff)), extstr))
+        result := int(C.fdfs_download_file(confstr, (*C.char)(unsafe.Pointer(&buff[0])), C.int64_t(len(buff)), extstr))
 
         if result == 0 {
-            fmt.Println("file id is", C.GoString(&C.file_id[0]))
-            c.JSON(http.StatusOK, gin.H{"result": "success", "file_id": "i am a file id", "key": "i am a key",})
+            file_id := C.GoString(&C.file_id[0])
+            fmt.Println("file id is", file_id)
+            c.JSON(http.StatusOK, gin.H{"result": "success", "file_id": file_id, "key": "i am a key",})
         } else {
             c.JSON(http.StatusOK, gin.H{"result": "fail",})
         }
 
+    })
 
+    router.GET("/getimage", func(c *gin.Context) {
+        fileidstr := C.CString(c.Query("fileid"))
+        defer C.free(unsafe.Pointer(fileidstr))
+        confstr := C.CString("/etc/fdfs/client.conf")
+        defer C.free(unsafe.Pointer(confstr))
+        extstr := C.CString(path.Ext(c.Query("fileid"))[1:])
+        defer C.free(unsafe.Pointer(extstr))
+
+        var file_length C.int64_t
+        var file_buffer unsafe.Pointer
+
+        result := int(C.fdfs_download_file(confstr, fileidstr, (*C.char)(file_buffer), &file_length))
+        defer C.free(file_buffer)
+
+        if result == 0 {
+            c.Header("Content-Type", "image/jpeg")
+            c.Header("Content-Length", strconv.Itoa(file_length))
+
+            c.Data(http.StatusOK, "image/jpeg", *(*byte)(file_buffer))
+        } else {
+            c.JSON(http.StatusOK, gin.H{"result": "fail",})
+        }
     })
 
     router.Run(":8080")
