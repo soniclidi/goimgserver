@@ -171,7 +171,7 @@ func main() {
             c.Header("Content-Type", "image/jpeg")
             c.Header("Content-Length", strconv.Itoa(file_len))
 
-            c.Data(http.StatusOK, "image/jpeg", (*[file_len]byte)(file_buffer)[0:file_len])
+            c.Data(http.StatusOK, "image/jpeg", C.GoBytes(file_buffer, file_len))
         } else {
             c.JSON(http.StatusOK, gin.H{"result": "fail",})
         }
