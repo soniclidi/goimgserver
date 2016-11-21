@@ -78,12 +78,10 @@ int fdfs_upload_file(char *conf_filename, char *filebuff, int64_t filesize, char
 }
 
 
-int fdfs_download_file(char *conf_filename, char *file_id, char *filebuff, int64_t *filesize)
+int fdfs_download_file(char *conf_filename, char *file_id, char *file_buff, int64_t *file_size)
 {
 	ConnectionInfo *pTrackerServer;
 	int result;
-	//char file_id[128];
-	int64_t file_size;
 	int64_t file_offset;
 	int64_t download_bytes;
 
@@ -105,7 +103,7 @@ int fdfs_download_file(char *conf_filename, char *file_id, char *filebuff, int64
 	result = storage_do_download_file1_ex(pTrackerServer, \
                 NULL, FDFS_DOWNLOAD_TO_BUFF, file_id, \
                 file_offset, download_bytes, \
-                &local_filename, NULL, file_size);
+                &file_buff, NULL, file_size);
 
 	tracker_disconnect_server_ex(pTrackerServer, true);
 	fdfs_client_destroy();
@@ -142,7 +140,7 @@ func main() {
         defer C.free(unsafe.Pointer(confstr))
         extstr := C.CString(path.Ext(filename)[1:])
         defer C.free(unsafe.Pointer(extstr))
-        result := int(C.fdfs_download_file(confstr, (*C.char)(unsafe.Pointer(&buff[0])), C.int64_t(len(buff)), extstr))
+        result := int(C.fdfs_upload_file(confstr, (*C.char)(unsafe.Pointer(&buff[0])), C.int64_t(len(buff)), extstr))
 
         if result == 0 {
             file_id := C.GoString(&C.file_id[0])
@@ -169,10 +167,11 @@ func main() {
         defer C.free(file_buffer)
 
         if result == 0 {
+            file_len := int(file_length)
             c.Header("Content-Type", "image/jpeg")
-            c.Header("Content-Length", strconv.Itoa(file_length))
+            c.Header("Content-Length", strconv.Itoa(file_len))
 
-            c.Data(http.StatusOK, "image/jpeg", *(*byte)(file_buffer))
+            c.Data(http.StatusOK, "image/jpeg", (*[file_len]byte)(file_buffer)[0:file_len])
         } else {
             c.JSON(http.StatusOK, gin.H{"result": "fail",})
         }
