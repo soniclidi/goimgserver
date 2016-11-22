@@ -144,7 +144,7 @@ func main() {
         result := int(C.fdfs_upload_file(confstr, (*C.char)(unsafe.Pointer(&buff[0])), C.int64_t(len(buff)), extstr))
 
         if result == 0 {
-            file_id := C.GoString(&C.file_id[0])
+            file_id := C.GoString(&C.out_file_id[0])
             fmt.Println("file id is", file_id)
             c.JSON(http.StatusOK, gin.H{"result": "success", "file_id": file_id, "key": "i am a key",})
         } else {
@@ -172,7 +172,7 @@ func main() {
             c.Header("Content-Length", strconv.Itoa(file_len))
             fmt.Println("file length is", file_len)
 
-            c.Data(http.StatusOK, "image/png", C.GoBytes(C.out_file_buffer, C.int(file_length)))
+            c.Data(http.StatusOK, "image/png", C.GoBytes(unsafe.Pointer(C.out_file_buffer), C.int(file_length)))
         } else {
             c.JSON(http.StatusOK, gin.H{"result": "fail",})
         }
