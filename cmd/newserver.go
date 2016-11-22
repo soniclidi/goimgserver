@@ -158,8 +158,6 @@ func main() {
         defer C.free(unsafe.Pointer(fileidstr))
         confstr := C.CString("/etc/fdfs/client.conf")
         defer C.free(unsafe.Pointer(confstr))
-        extstr := C.CString(path.Ext(c.Query("fileid"))[1:])
-        defer C.free(unsafe.Pointer(extstr))
 
         var file_length C.int64_t
 
@@ -168,7 +166,7 @@ func main() {
 
         if result == 0 {
             file_len := int(file_length)
-            c.Header("Content-Type", "image/jpeg")
+            c.Header("Content-Type", "image/" + path.Ext(c.Query("fileid"))[1:])
             c.Header("Content-Length", strconv.Itoa(file_len))
             fmt.Println("file length is", file_len)
 
