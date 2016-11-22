@@ -163,9 +163,9 @@ func main() {
         var file_length C.int64_t
 
         result := int(C.fdfs_download_file(confstr, fileidstr, &file_length))
-        defer C.free(unsafe.Pointer(C.out_file_buffer))
 
         if result == 0 {
+            defer C.free(unsafe.Pointer(C.out_file_buffer))
             file_len := int(file_length)
             c.Header("Content-Type", "image/" + path.Ext(file_id)[1:])
             c.Header("Content-Length", strconv.Itoa(file_len))
