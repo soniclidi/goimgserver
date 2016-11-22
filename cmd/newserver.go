@@ -167,13 +167,12 @@ func main() {
         if result == 0 {
             defer C.free(unsafe.Pointer(C.out_file_buffer))
             file_len := int(file_length)
-            c.Header("Content-Type", "image/" + path.Ext(file_id)[1:])
             c.Header("Content-Length", strconv.Itoa(file_len))
             fmt.Println("file id is", file_id)
             fmt.Println("file content type is", path.Ext(file_id)[1:])
             fmt.Println("file length is", file_len)
 
-            c.Data(http.StatusOK, "image/png", C.GoBytes(unsafe.Pointer(C.out_file_buffer), C.int(file_length)))
+            c.Data(http.StatusOK, "image/" + path.Ext(file_id)[1:], C.GoBytes(unsafe.Pointer(C.out_file_buffer), C.int(file_length)))
         } else {
             c.JSON(http.StatusOK, gin.H{"result": "fail",})
         }
