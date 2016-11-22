@@ -181,7 +181,7 @@ func main() {
 
             c.Data(http.StatusOK, "image/" + path.Ext(file_id)[1:], C.GoBytes(unsafe.Pointer(C.out_file_buffer), C.int(file_length)))
         } else {
-            c.JSON(http.StatusOK, gin.H{"result": "fail",})
+            c.JSON(http.StatusNotFound, gin.H{"result": "not found",})
         }
     })
 
