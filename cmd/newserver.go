@@ -86,6 +86,10 @@ int fdfs_download_file(char *conf_filename, char *file_id, int64_t *file_size)
 	int64_t file_offset;
 	int64_t download_bytes;
 
+	log_init();
+	g_log_context.log_level = LOG_ERR;
+	ignore_signal_pipe();
+	
 	if ((result = fdfs_client_init(conf_filename)) != 0)
 	{
 		return result;
