@@ -31,7 +31,8 @@ import (
 #include "client_global.h"
 
 
-char file_id[128];
+char out_file_id[128];
+char *out_file_buffer;
 
 int fdfs_upload_file(char *conf_filename, char *filebuff, int64_t filesize, char *extname)
 {
@@ -40,9 +41,8 @@ int fdfs_upload_file(char *conf_filename, char *filebuff, int64_t filesize, char
 	int result;
 	int store_path_index;
 	ConnectionInfo storageServer;
-	//char file_id[128];
 
-	if ((result=fdfs_client_init(conf_filename)) != 0)
+	if ((result = fdfs_client_init(conf_filename)) != 0)
 	{
 		return result;
 	}
@@ -65,11 +65,11 @@ int fdfs_upload_file(char *conf_filename, char *filebuff, int64_t filesize, char
 	//result = storage_upload_by_filename1(pTrackerServer, \
 	//		&storageServer, store_path_index, \
 	//		local_filename, NULL, \
-	//		NULL, 0, group_name, file_id);
+	//		NULL, 0, group_name, out_file_id);
 	result = storage_upload_by_filebuff1(pTrackerServer, \
 			&storageServer, store_path_index, \
 			filebuff, filesize, extname, \
-			NULL, 0, group_name, file_id);
+			NULL, 0, group_name, out_file_id);
 
 	tracker_disconnect_server_ex(pTrackerServer, true);
 	fdfs_client_destroy();
@@ -78,14 +78,15 @@ int fdfs_upload_file(char *conf_filename, char *filebuff, int64_t filesize, char
 }
 
 
-int fdfs_download_file(char *conf_filename, char *file_id, char **file_buff, int64_t *file_size)
+//int fdfs_download_file(char *conf_filename, char *file_id, char **file_buff, int64_t *file_size)
+int fdfs_download_file(char *conf_filename, char *file_id, int64_t *file_size)
 {
 	ConnectionInfo *pTrackerServer;
 	int result;
 	int64_t file_offset;
 	int64_t download_bytes;
 
-	if ((result=fdfs_client_init(conf_filename)) != 0)
+	if ((result = fdfs_client_init(conf_filename)) != 0)
 	{
 		return result;
 	}
@@ -103,7 +104,7 @@ int fdfs_download_file(char *conf_filename, char *file_id, char **file_buff, int
 	result = storage_do_download_file1_ex(pTrackerServer, \
                 NULL, FDFS_DOWNLOAD_TO_BUFF, file_id, \
                 file_offset, download_bytes, \
-                file_buff, NULL, file_size);
+                &out_file_buffer, NULL, file_size);
 
 	tracker_disconnect_server_ex(pTrackerServer, true);
 	fdfs_client_destroy();
@@ -161,10 +162,9 @@ func main() {
         defer C.free(unsafe.Pointer(extstr))
 
         var file_length C.int64_t
-        var file_buffer unsafe.Pointer
 
-        result := int(C.fdfs_download_file(confstr, fileidstr, (**C.char)(&file_buffer), &file_length))
-        defer C.free(file_buffer)
+        result := int(C.fdfs_download_file(confstr, fileidstr, &file_length))
+        defer C.free(unsafe.Pointer(C.out_file_buffer))
 
         if result == 0 {
             file_len := int(file_length)
@@ -172,7 +172,7 @@ func main() {
             c.Header("Content-Length", strconv.Itoa(file_len))
             fmt.Println("file length is", file_len)
 
-            c.Data(http.StatusOK, "image/png", C.GoBytes(file_buffer, C.int(file_length)))
+            c.Data(http.StatusOK, "image/png", C.GoBytes(C.out_file_buffer, C.int(file_length)))
         } else {
             c.JSON(http.StatusOK, gin.H{"result": "fail",})
         }
