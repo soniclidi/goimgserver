@@ -154,7 +154,8 @@ func main() {
     })
 
     router.GET("/getimage", func(c *gin.Context) {
-        fileidstr := C.CString(c.Query("fileid"))
+        file_id := c.Query("fileid")
+        fileidstr := C.CString(file_id)
         defer C.free(unsafe.Pointer(fileidstr))
         confstr := C.CString("/etc/fdfs/client.conf")
         defer C.free(unsafe.Pointer(confstr))
@@ -166,8 +167,10 @@ func main() {
 
         if result == 0 {
             file_len := int(file_length)
-            c.Header("Content-Type", "image/" + path.Ext(c.Query("fileid"))[1:])
+            c.Header("Content-Type", "image/" + path.Ext(file_id)[1:])
             c.Header("Content-Length", strconv.Itoa(file_len))
+            fmt.Println("file id is", file_id)
+            fmt.Println("file content type is", path.Ext(file_id)[1:])
             fmt.Println("file length is", file_len)
 
             c.Data(http.StatusOK, "image/png", C.GoBytes(unsafe.Pointer(C.out_file_buffer), C.int(file_length)))
