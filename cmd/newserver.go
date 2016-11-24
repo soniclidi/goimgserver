@@ -59,15 +59,13 @@ int fdfs_upload_file(char *filebuff, int64_t filesize, char *extname)
 	pTrackerServer = tracker_get_connection();
 	if (pTrackerServer == NULL)
 	{
-		fdfs_client_destroy();
 		return errno != 0 ? errno : ECONNREFUSED;
 	}
 
 	*group_name = '\0';
-	if ((result=tracker_query_storage_store(pTrackerServer, \
+	if ((result = tracker_query_storage_store(pTrackerServer, \
 	                &storageServer, group_name, &store_path_index)) != 0)
 	{
-		fdfs_client_destroy();
 		return result;
 	}
 
@@ -86,7 +84,6 @@ int fdfs_upload_file(char *filebuff, int64_t filesize, char *extname)
 }
 
 
-//int fdfs_download_file(char *file_id, char **file_buff, int64_t *file_size)
 int fdfs_download_file(char *file_id, int64_t *file_size)
 {
 	ConnectionInfo *pTrackerServer;
@@ -97,7 +94,6 @@ int fdfs_download_file(char *file_id, int64_t *file_size)
 	pTrackerServer = tracker_get_connection();
 	if (pTrackerServer == NULL)
 	{
-		fdfs_client_destroy();
 		return errno != 0 ? errno : ECONNREFUSED;
 	}
 
@@ -114,6 +110,24 @@ int fdfs_download_file(char *file_id, int64_t *file_size)
 	return result;
 }
 
+
+int fdfs_delete_file(char *file_id)
+{
+	ConnectionInfo *pTrackerServer;
+	int result;
+
+	pTrackerServer = tracker_get_connection();
+	if (pTrackerServer == NULL)
+	{
+		return errno != 0 ? errno : ECONNREFUSED;
+	}
+
+	result = storage_delete_file1(pTrackerServer, NULL, file_id);
+
+	tracker_disconnect_server_ex(pTrackerServer, true);
+
+	return result;
+}
 
 #cgo CFLAGS: -I/usr/include/fastcommon -I/usr/include/fastdfs
 #cgo LDFLAGS: -L/usr/lib64 -lpthread -lfastcommon -lfdfsclient
@@ -157,6 +171,23 @@ func main() {
             file_id := C.GoString(&C.out_file_id[0])
             fmt.Println("file id is", file_id)
             c.JSON(http.StatusOK, gin.H{"result": "success", "file_id": file_id, "key": "i am a key",})
+        } else {
+            c.JSON(http.StatusOK, gin.H{"result": "fail",})
+        }
+
+    })
+
+    router.GET("/delete", func(c *gin.Context) {
+        file_id := c.Query("fileid")
+        fileidstr := C.CString(file_id)
+        defer C.free(unsafe.Pointer(fileidstr))
+
+        result := int(C.fdfs_delete_file(fileidstr))
+
+        if result == 0 {
+            file_id := C.GoString(&C.out_file_id[0])
+            fmt.Println("delete file:", file_id)
+            c.JSON(http.StatusOK, gin.H{"result": "success",})
         } else {
             c.JSON(http.StatusOK, gin.H{"result": "fail",})
         }
