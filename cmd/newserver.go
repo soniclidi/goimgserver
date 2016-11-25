@@ -142,11 +142,11 @@ int fdfs_delete_file(char *file_id)
 import "C"
 
 type File struct {
-    file_id    string
-    file_name  string
-    file_uid   string
-    file_md5   string
-    file_token string
+    File_id    string
+    File_name  string
+    File_uid   string
+    File_md5   string
+    File_token string
 }
 
 
@@ -197,9 +197,10 @@ func main() {
 
         if result == 0 {
             fileId := C.GoString(&C.out_file_id[0])
-            fmt.Println("file id is", fileId)
+            fmt.Println("file id:", fileId)
 
-            fileToken := Krand(10, KC_RAND_KIND_ALL)
+            fileToken := string(Krand(10, KC_RAND_KIND_ALL))
+            fmt.Println("file token:", fileToken)
             newFile := &File{
                 file_id: fileId,
                 file_name: fileName,
@@ -212,12 +213,12 @@ func main() {
             if dberr != nil {
                 fmt.Println(err)
                 // to do: do something
-                c.JSON(http.StatusOK, gin.H{"result": "fail",})
+                c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "insert to db error",})
             } else {
                 c.JSON(http.StatusOK, gin.H{"result": "success", "file_id": fileId, "file_token": fileToken,})
             }
         } else {
-            c.JSON(http.StatusOK, gin.H{"result": "fail",})
+            c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "upload file error",})
         }
 
     })
@@ -239,13 +240,13 @@ func main() {
                     fmt.Println("delete file:", fileId)
                     c.JSON(http.StatusOK, gin.H{"result": "success",})
                 } else {
-                    c.JSON(http.StatusOK, gin.H{"result": "fail",})
+                    c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "delete file error",})
                 }
             } else {
                 c.JSON(http.StatusOK, gin.H{"result": "success",})
             }
         } else {
-            c.JSON(http.StatusOK, gin.H{"result": "fail",})
+            c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "remove from db error",})
         }
 
     })
