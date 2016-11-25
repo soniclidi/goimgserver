@@ -6,11 +6,18 @@ import (
     "log"
     "net/http"
     "html/template"
-    "github.com/gin-gonic/gin"
     "unsafe"
     "io/ioutil"
     "path"
     "strconv"
+
+    "github.com/gin-gonic/gin"
+    "gopkg.in/mgo.v2"
+    "gopkg.in/mgo.v2/bson"
+    "crypto/md5"
+    "encoding/hex"
+    "math/rand"
+    "time"
 )
 
 /*
@@ -134,16 +141,33 @@ int fdfs_delete_file(char *file_id)
 */
 import "C"
 
+type File struct {
+    file_id    string
+    file_name  string
+    file_uid   string
+    file_md5   string
+    file_token string
+}
+
+
 func main() {
 
-    confstr := C.CString("/etc/fdfs/client.conf")
-    defer C.free(unsafe.Pointer(confstr))
-    result := int(C.init_fdfs(confstr))
+    mgo, err := mgo.Dial("192.168.1.106:27017")
+    if err != nil {
+        panic(err)
+    }
+    defer mgo.Close()
+
+    confStr := C.CString("/etc/fdfs/client.conf")
+    defer C.free(unsafe.Pointer(confStr))
+    result := int(C.init_fdfs(confStr))
 
     if result != 0 {
-        fmt.Println("init fdfs error!")
-        return
+        panic("init fdfs error!")
     }
+
+    db := mgo.DB("goimgserver")
+    collection := db.C("files")
 
     router := gin.Default()
     html := template.Must(template.ParseFiles("upload.tmpl"))
@@ -155,22 +179,43 @@ func main() {
 
     router.POST("/upload", func(c *gin.Context) {
         file, header, err := c.Request.FormFile("file")
-        fmt.Println(header.Filename)
-        filename := header.Filename
+        fileName := header.Filename
 
-        buff,err := ioutil.ReadAll(file)
+        buff, err := ioutil.ReadAll(file)
         if err != nil {
             log.Fatal(err)
         }
 
-        extstr := C.CString(path.Ext(filename)[1:])
-        defer C.free(unsafe.Pointer(extstr))
-        result := int(C.fdfs_upload_file((*C.char)(unsafe.Pointer(&buff[0])), C.int64_t(len(buff)), extstr))
+        md5Ctx := md5.New()
+        md5Ctx.Write(buff)
+        md5Str := hex.EncodeToString(md5Ctx.Sum(nil))
+        fmt.Println("file md5:", md5Str)
+
+        extStr := C.CString(path.Ext(fileName)[1:])
+        defer C.free(unsafe.Pointer(extStr))
+        result := int(C.fdfs_upload_file((*C.char)(unsafe.Pointer(&buff[0])), C.int64_t(len(buff)), extStr))
 
         if result == 0 {
-            file_id := C.GoString(&C.out_file_id[0])
-            fmt.Println("file id is", file_id)
-            c.JSON(http.StatusOK, gin.H{"result": "success", "file_id": file_id, "key": "i am a key",})
+            fileId := C.GoString(&C.out_file_id[0])
+            fmt.Println("file id is", fileId)
+
+            fileToken := Krand(10, KC_RAND_KIND_ALL)
+            newFile := &File{
+                file_id: fileId,
+                file_name: fileName,
+                file_uid: c.PostForm("uid"),
+                file_md5: md5Str,
+                file_token: fileToken,
+            }
+
+            dberr := collection.Insert(newFile)
+            if dberr != nil {
+                fmt.Println(err)
+                // to do: do something
+                c.JSON(http.StatusOK, gin.H{"result": "fail",})
+            } else {
+                c.JSON(http.StatusOK, gin.H{"result": "success", "file_id": fileId, "file_token": fileToken,})
+            }
         } else {
             c.JSON(http.StatusOK, gin.H{"result": "fail",})
         }
@@ -178,43 +223,87 @@ func main() {
     })
 
     router.GET("/delete", func(c *gin.Context) {
-        file_id := c.Query("fileid")
-        fileidstr := C.CString(file_id)
-        defer C.free(unsafe.Pointer(fileidstr))
+        fileToken := c.Query("filetoken")
+        fileId := c.Query("fileid")
+        fileIdStr := C.CString(fileId)
+        defer C.free(unsafe.Pointer(fileIdStr))
 
-        result := int(C.fdfs_delete_file(fileidstr))
+        err := collection.Remove(bson.M{"file_token": fileToken})
 
-        if result == 0 {
-            file_id := C.GoString(&C.out_file_id[0])
-            fmt.Println("delete file:", file_id)
-            c.JSON(http.StatusOK, gin.H{"result": "success",})
+        if err == nil {
+            count, _ := collection.Find(bson.M{"file_id": fileId}).Count()
+            if count == 0 {
+                result := int(C.fdfs_delete_file(fileIdStr))
+
+                if result == 0 {
+                    fmt.Println("delete file:", fileId)
+                    c.JSON(http.StatusOK, gin.H{"result": "success",})
+                } else {
+                    c.JSON(http.StatusOK, gin.H{"result": "fail",})
+                }
+            } else {
+                c.JSON(http.StatusOK, gin.H{"result": "success",})
+            }
         } else {
             c.JSON(http.StatusOK, gin.H{"result": "fail",})
         }
 
     })
 
+    router.GET("/exist", func(c *gin.Context) {
+        md5 := c.Query("md5")
+        count, err := collection.Find(bson.M{"file_md5": md5}).Count()
+
+        if err != nil || count == 0 {
+            c.JSON(http.StatusOK, gin.H{"exist": "no",})
+        } else {
+            c.JSON(http.StatusOK, gin.H{"exist": "yes",})
+        }
+
+    })
+
     router.GET("/getimage", func(c *gin.Context) {
-        file_id := c.Query("fileid")
-        fileidstr := C.CString(file_id)
-        defer C.free(unsafe.Pointer(fileidstr))
+        fileId := c.Query("fileid")
+        fileIdStr := C.CString(fileId)
+        defer C.free(unsafe.Pointer(fileIdStr))
         var file_length C.int64_t
 
-        result := int(C.fdfs_download_file(fileidstr, &file_length))
+        result := int(C.fdfs_download_file(fileIdStr, &file_length))
 
         if result == 0 {
             defer C.free(unsafe.Pointer(C.out_file_buffer))
-            file_len := int(file_length)
-            c.Header("Content-Length", strconv.Itoa(file_len))
-            fmt.Println("file id is", file_id)
-            fmt.Println("file content type is", path.Ext(file_id)[1:])
-            fmt.Println("file length is", file_len)
+            fileLen := int(file_length)
+            c.Header("Content-Length", strconv.Itoa(fileLen))
+            fmt.Println("file id is", fileId)
+            fmt.Println("file content type is", path.Ext(fileId)[1:])
+            fmt.Println("file length is", fileLen)
 
-            c.Data(http.StatusOK, "image/" + path.Ext(file_id)[1:], C.GoBytes(unsafe.Pointer(C.out_file_buffer), C.int(file_length)))
+            c.Data(http.StatusOK, "image/" + path.Ext(fileId)[1:], C.GoBytes(unsafe.Pointer(C.out_file_buffer), C.int(file_length)))
         } else {
             c.JSON(http.StatusNotFound, gin.H{"result": "not found",})
         }
     })
 
     router.Run(":8080")
+}
+
+const (
+    KC_RAND_KIND_NUM   = 0  // 纯数字
+    KC_RAND_KIND_LOWER = 1  // 小写字母
+    KC_RAND_KIND_UPPER = 2  // 大写字母
+    KC_RAND_KIND_ALL   = 3  // 数字、大小写字母
+)
+
+func Krand(size int, kind int) []byte {
+    ikind, kinds, result := kind, [][]int{[]int{10, 48}, []int{26, 97}, []int{26, 65}}, make([]byte, size)
+    is_all := kind > 2 || kind < 0
+    rand.Seed(time.Now().UnixNano())
+    for i :=0; i < size; i++ {
+        if is_all { // random ikind
+            ikind = rand.Intn(3)
+        }
+        scope, base := kinds[ikind][0], kinds[ikind][1]
+        result[i] = uint8(base+rand.Intn(scope))
+    }
+    return result
 }
