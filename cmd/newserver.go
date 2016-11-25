@@ -202,11 +202,11 @@ func main() {
             fileToken := string(Krand(10, KC_RAND_KIND_ALL))
             fmt.Println("file token:", fileToken)
             newFile := &File{
-                file_id: fileId,
-                file_name: fileName,
-                file_uid: c.PostForm("uid"),
-                file_md5: md5Str,
-                file_token: fileToken,
+                File_id: fileId,
+                File_name: fileName,
+                File_uid: c.PostForm("uid"),
+                File_md5: md5Str,
+                File_token: fileToken,
             }
 
             dberr := collection.Insert(newFile)
