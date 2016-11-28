@@ -227,7 +227,7 @@ func main() {
                 File_owner_id: c.PostForm("uid"),
                 File_md5: md5Str,
                 File_token: fileToken,
-                File_upload_time: time.Now().Unix(),
+                File_upload_time: int(time.Now().Unix()),
             }
 
             dberr := collection.Insert(newFile)
