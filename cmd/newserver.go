@@ -144,9 +144,10 @@ import "C"
 type File struct {
     File_id    string
     File_name  string
-    File_uid   string
     File_md5   string
     File_token string
+    File_owner_id    string
+    File_upload_time int
 }
 
 
@@ -223,9 +224,10 @@ func main() {
             newFile := &File{
                 File_id: fileId,
                 File_name: fileName,
-                File_uid: c.PostForm("uid"),
+                File_owner_id: c.PostForm("uid"),
                 File_md5: md5Str,
                 File_token: fileToken,
+                File_upload_time: time.Now().Unix(),
             }
 
             dberr := collection.Insert(newFile)
