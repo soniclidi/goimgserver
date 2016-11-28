@@ -191,14 +191,33 @@ func main() {
         md5Str := hex.EncodeToString(md5Ctx.Sum(nil))
         fmt.Println("file md5:", md5Str)
 
-        extStr := C.CString(path.Ext(fileName)[1:])
-        defer C.free(unsafe.Pointer(extStr))
-        result := int(C.fdfs_upload_file((*C.char)(unsafe.Pointer(&buff[0])), C.int64_t(len(buff)), extStr))
+        query := collection.Find(bson.M{"file_md5": md5Str})
+        count, _ := query.Count()
+
+        var result int = -1
+        var fileId string
+        //new file
+        if count == 0 {
+            extStr := C.CString(path.Ext(fileName)[1:])
+            defer C.free(unsafe.Pointer(extStr))
+            result = int(C.fdfs_upload_file((*C.char)(unsafe.Pointer(&buff[0])), C.int64_t(len(buff)), extStr))
+            if result == 0 {
+                fileId = C.GoString(&C.out_file_id[0])
+                fmt.Println("new file id:", fileId)
+            }
+        } else {
+            //get fileId from db
+            existFile := File{}
+            err = query.One(&existFile)
+            if err == nil {
+                fileId = existFile.File_id
+                fmt.Println("exist file id:", existFile.File_id)
+                result = 0
+            }
+        }
+
 
         if result == 0 {
-            fileId := C.GoString(&C.out_file_id[0])
-            fmt.Println("file id:", fileId)
-
             fileToken := string(Krand(10, KC_RAND_KIND_ALL))
             fmt.Println("file token:", fileToken)
             newFile := &File{
