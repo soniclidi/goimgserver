@@ -22,6 +22,7 @@ import (
     "gopkg.in/mgo.v2"
     "github.com/gin-gonic/gin"
     "gopkg.in/mgo.v2/bson"
+    "strings"
 )
 
 /*
@@ -306,13 +307,23 @@ func main() {
 
         if result == 0 {
             defer C.free(unsafe.Pointer(C.out_file_buffer))
+            originalExt := c.Query("originalext")
             fileLen := int(file_length)
             c.Header("Content-Length", strconv.Itoa(fileLen))
-            fmt.Println("file id is", fileId)
-            fmt.Println("file content type is", path.Ext(fileId)[1:])
-            fmt.Println("file length is", fileLen)
 
             contentType := mime.TypeByExtension(path.Ext(fileId))
+            if originalExt == "true" {
+                fileToken := c.Query("filetoken")
+                existFile := File{}
+                err := collection.Find(bson.M{"file_token": fileToken, "file_id": fileId}).One(&existFile)
+                if err == nil {
+                    contentType = mime.TypeByExtension(path.Ext(existFile.File_name))
+                }
+            }
+
+            fmt.Println("file id is", fileId)
+            fmt.Println("file content type is", contentType)
+            fmt.Println("file length is", fileLen)
 
             c.Data(http.StatusOK, contentType, C.GoBytes(unsafe.Pointer(C.out_file_buffer), C.int(file_length)))
         } else {
