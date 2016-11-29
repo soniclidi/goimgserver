@@ -22,7 +22,6 @@ import (
     "gopkg.in/mgo.v2"
     "github.com/gin-gonic/gin"
     "gopkg.in/mgo.v2/bson"
-    "strings"
 )
 
 /*
