@@ -10,14 +10,17 @@ import (
     "io/ioutil"
     "path"
     "strconv"
-
-    "github.com/gin-gonic/gin"
-    "gopkg.in/mgo.v2"
-    "gopkg.in/mgo.v2/bson"
     "crypto/md5"
     "encoding/hex"
     "math/rand"
     "time"
+    "flag"
+
+    "config"
+
+    "gopkg.in/mgo.v2"
+    "github.com/gin-gonic/gin"
+    "gopkg.in/mgo.v2/bson"
 )
 
 /*
@@ -150,16 +153,24 @@ type File struct {
     File_upload_time int
 }
 
+var configFile = flag.String("conf", "./config.json", "the path of the config.")
 
 func main() {
 
-    mgo, err := mgo.Dial("192.168.1.106:27017")
+    flag.Parse()
+
+    conf, err := config.Load(*configFile)
+    if err != nil {
+        panic(err)
+    }
+
+    mgo, err := mgo.Dial(conf.DataBase.IP + ":" + conf.DataBase.Port)
     if err != nil {
         panic(err)
     }
     defer mgo.Close()
 
-    confStr := C.CString("/etc/fdfs/client.conf")
+    confStr := C.CString(conf.FdfsClient.ConfigFile)
     defer C.free(unsafe.Pointer(confStr))
     result := int(C.init_fdfs(confStr))
 
@@ -167,11 +178,11 @@ func main() {
         panic("init fdfs error!")
     }
 
-    db := mgo.DB("goimgserver")
-    collection := db.C("files")
+    db := mgo.DB(conf.DataBase.DB)
+    collection := db.C(conf.DataBase.Collection)
 
     router := gin.Default()
-    html := template.Must(template.ParseFiles("upload.tmpl"))
+    html := template.Must(template.ParseFiles(conf.WebServer.Template))
     router.SetHTMLTemplate(html)
 
     router.GET("/upload", func(c *gin.Context) {
@@ -250,7 +261,7 @@ func main() {
         fileIdStr := C.CString(fileId)
         defer C.free(unsafe.Pointer(fileIdStr))
 
-        err := collection.Remove(bson.M{"file_token": fileToken})
+        err := collection.Remove(bson.M{"file_token": fileToken, "file_id": fileId})
 
         if err == nil {
             count, _ := collection.Find(bson.M{"file_id": fileId}).Count()

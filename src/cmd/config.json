@@ -1,0 +1,17 @@
+{
+  "fdfsclient": {
+    "configfile": "/etc/fdfs/client.conf"
+  },
+
+  "database": {
+    "ip": "192.168.1.106",
+    "port": 27017,
+    "db": "goimgserver",
+    "collection":"files"
+  },
+
+  "webserver": {
+    "port": 8080,
+    "template": "upload.tmpl"
+  }
+}
