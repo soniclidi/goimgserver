@@ -164,7 +164,7 @@ func main() {
         panic(err)
     }
 
-    mgo, err := mgo.Dial(conf.DataBase.IP + ":" + conf.DataBase.Port)
+    mgo, err := mgo.Dial(conf.DataBase.IP + ":" + strconv.Itoa(conf.DataBase.Port))
     if err != nil {
         panic(err)
     }
@@ -317,7 +317,7 @@ func main() {
         }
     })
 
-    router.Run(":8080")
+    router.Run(":" + strconv.Itoa(conf.WebServer.Port))
 }
 
 const (
