@@ -15,6 +15,7 @@ import (
     "math/rand"
     "time"
     "flag"
+    "mime"
 
     "config"
 
@@ -311,7 +312,9 @@ func main() {
             fmt.Println("file content type is", path.Ext(fileId)[1:])
             fmt.Println("file length is", fileLen)
 
-            c.Data(http.StatusOK, "image/" + path.Ext(fileId)[1:], C.GoBytes(unsafe.Pointer(C.out_file_buffer), C.int(file_length)))
+            contentType := mime.TypeByExtension(path.Ext(fileId))
+
+            c.Data(http.StatusOK, contentType, C.GoBytes(unsafe.Pointer(C.out_file_buffer), C.int(file_length)))
         } else {
             c.JSON(http.StatusNotFound, gin.H{"result": "not found",})
         }
