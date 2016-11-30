@@ -16,7 +16,8 @@ type DataBase struct {
 
 type WebServer struct {
     Port int `json:"port"`
-    Template string `json:"template"`
+    Template  string `json:"template"`
+    MimeTypes string `json:"mimetypes"`
 }
 
 type FdfsClient struct {

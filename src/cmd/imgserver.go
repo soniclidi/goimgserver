@@ -157,7 +157,6 @@ type File struct {
 }
 
 var configFile = flag.String("conf", "./config.json", "the path of the config.")
-var mimeFile = flag.String("mime", "./mime.types", "the path of the mime type file.")
 
 func main() {
     flag.Parse()
@@ -167,7 +166,10 @@ func main() {
         panic(err)
     }
 
-    mymime.Load(*mimeFile)
+    mymime.Load(conf.WebServer.MimeTypes)
+    if err != nil {
+        fmt.Println("load mime types file error!")
+    }
 
     mgo, err := mgo.Dial(conf.DataBase.IP + ":" + strconv.Itoa(conf.DataBase.Port))
     if err != nil {

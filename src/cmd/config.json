@@ -12,6 +12,7 @@
 
   "webserver": {
     "port": 8080,
-    "template": "upload.tmpl"
+    "template": "upload.tmpl",
+    "mimetypes": "mime.types"
   }
 }
