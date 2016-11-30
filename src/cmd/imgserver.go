@@ -24,6 +24,7 @@ import (
     "gopkg.in/mgo.v2"
     "github.com/gin-gonic/gin"
     "gopkg.in/mgo.v2/bson"
+    "mymime"
 )
 
 /*
@@ -157,15 +158,17 @@ type File struct {
 }
 
 var configFile = flag.String("conf", "./config.json", "the path of the config.")
+var mimeFile = flag.String("mime", "./mime.types", "the path of the mime type file.")
 
 func main() {
-
     flag.Parse()
 
-    conf, err := config.Load(*configFile)
+    conf, err := config.Load(configFile)
     if err != nil {
         panic(err)
     }
+
+    mymime.Load(mimeFile)
 
     mgo, err := mgo.Dial(conf.DataBase.IP + ":" + strconv.Itoa(conf.DataBase.Port))
     if err != nil {
@@ -310,7 +313,7 @@ func main() {
             fileLen := int(file_length)
             c.Header("Content-Length", strconv.Itoa(fileLen))
 
-            contentType := mime.TypeByExtension(path.Ext(fileId))
+            contentType := mymime.TypeByExt(path.Ext(fileId)[1:])
             if originalExt == "true" {
                 fileToken := c.Query("filetoken")
                 existFile := File{}
