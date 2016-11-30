@@ -163,12 +163,12 @@ var mimeFile = flag.String("mime", "./mime.types", "the path of the mime type fi
 func main() {
     flag.Parse()
 
-    conf, err := config.Load(configFile)
+    conf, err := config.Load(*configFile)
     if err != nil {
         panic(err)
     }
 
-    mymime.Load(mimeFile)
+    mymime.Load(*mimeFile)
 
     mgo, err := mgo.Dial(conf.DataBase.IP + ":" + strconv.Itoa(conf.DataBase.Port))
     if err != nil {
