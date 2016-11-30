@@ -12,7 +12,7 @@ var types = make(map[string] string)
 
 func Load(path string) error {
     if path == "" {
-        return errors.New("Config path is empty!")
+        return errors.New("MIME type file path is empty!")
     }
 
     file, err := os.Open(path)
@@ -30,13 +30,13 @@ func Load(path string) error {
         }
         fields := strings.Fields(line)
 
-        var thevalue string
+        var value string
         for i, v := range fields {
             if i == 0 {
-                thevalue = v
+                value = v
             } else {
-                types[v] = thevalue
-                fmt.Println("ext: ", v, "type: ", thevalue)
+                types[v] = value
+                fmt.Println("ext: ", v, "type: ", value)
             }
         }
     }
