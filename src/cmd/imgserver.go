@@ -14,17 +14,16 @@ import (
     "encoding/hex"
     "time"
     "flag"
-    "mime"
     "encoding/base64"
     "strings"
 
     "config"
+    "mymime"
 
     "github.com/pborman/uuid"
     "gopkg.in/mgo.v2"
     "github.com/gin-gonic/gin"
     "gopkg.in/mgo.v2/bson"
-    "mymime"
 )
 
 /*
@@ -319,7 +318,7 @@ func main() {
                 existFile := File{}
                 err := collection.Find(bson.M{"file_token": fileToken, "file_id": fileId}).One(&existFile)
                 if err == nil {
-                    contentType = mime.TypeByExtension(path.Ext(existFile.File_name))
+                    contentType = mymime.TypeByExt(path.Ext(existFile.File_name)[1:])
                 }
             }
 
