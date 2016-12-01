@@ -240,7 +240,7 @@ func main() {
             newFile := &File{
                 File_id: fileId,
                 File_name: fileName,
-                File_owner_id: c.PostForm("uid"),
+                File_owner_id: c.PostForm("owner_id"),
                 File_md5: md5Str,
                 File_token: fileToken,
                 File_upload_time: int(time.Now().Unix()),
@@ -261,8 +261,8 @@ func main() {
     })
 
     router.GET("/delete", func(c *gin.Context) {
-        fileToken := c.Query("filetoken")
-        fileId := c.Query("fileid")
+        fileToken := c.Query("file_token")
+        fileId := c.Query("file_id")
         fileIdStr := C.CString(fileId)
         defer C.free(unsafe.Pointer(fileIdStr))
 
@@ -289,7 +289,7 @@ func main() {
     })
 
     router.GET("/exist", func(c *gin.Context) {
-        md5 := c.Query("md5")
+        md5 := c.Query("file_md5")
         count, err := collection.Find(bson.M{"file_md5": md5}).Count()
 
         if err != nil || count == 0 {
@@ -300,8 +300,8 @@ func main() {
 
     })
 
-    router.GET("/getimage", func(c *gin.Context) {
-        fileId := c.Query("fileid")
+    router.GET("/get", func(c *gin.Context) {
+        fileId := c.Query("file_id")
         fileIdStr := C.CString(fileId)
         defer C.free(unsafe.Pointer(fileIdStr))
         var file_length C.int64_t
@@ -310,13 +310,13 @@ func main() {
 
         if result == 0 {
             defer C.free(unsafe.Pointer(C.out_file_buffer))
-            originalExt := c.Query("originalext")
+            originalExt := c.Query("original_ext")
             fileLen := int(file_length)
             c.Header("Content-Length", strconv.Itoa(fileLen))
 
             contentType := mymime.TypeByExt(path.Ext(fileId)[1:])
             if originalExt == "true" {
-                fileToken := c.Query("filetoken")
+                fileToken := c.Query("file_token")
                 existFile := File{}
                 err := collection.Find(bson.M{"file_token": fileToken, "file_id": fileId}).One(&existFile)
                 if err == nil {
@@ -330,8 +330,21 @@ func main() {
 
             c.Data(http.StatusOK, contentType, C.GoBytes(unsafe.Pointer(C.out_file_buffer), C.int(file_length)))
         } else {
-            c.JSON(http.StatusNotFound, gin.H{"result": "not found",})
+            c.JSON(http.StatusNotFound, gin.H{"result": "fail", "desc": "not found"})
         }
+    })
+
+    router.GET("/info", func(c *gin.Context) {
+        fileToken := c.Query("file_token")
+        existFile := File{}
+        err := collection.Find(bson.M{"file_token": fileToken}).One(&existFile)
+
+        if err == nil {
+            c.JSON(http.StatusOK, gin.H{"result": "success", "data": existFile,})
+        } else {
+            c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "get file info error",})
+        }
+
     })
 
     router.Run(":" + strconv.Itoa(conf.WebServer.Port))
