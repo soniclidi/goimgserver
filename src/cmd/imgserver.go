@@ -350,7 +350,7 @@ func main() {
             dstBuffer := new(bytes.Buffer)
             imaging.Encode(dstBuffer, dstImage, f)
 
-            c.Header("Content-Length", dstBuffer.Len())
+            c.Header("Content-Length", strconv.Itoa(dstBuffer.Len()))
             contentType := mymime.TypeByExt(path.Ext(fileId)[1:])
 
             c.Data(http.StatusOK, contentType, dstBuffer.Bytes())
@@ -418,7 +418,7 @@ func doUpload(fileBuff []byte, fileName string, ownerId string, dirId string) (i
             File_id: fileId,
             File_name: fileName,
             File_owner_id: ownerId,
-            File_dir_id: dirId,
+            File_dir_id: bson.ObjectId(dirId),
             File_md5: md5Str,
             File_token: fileToken,
             File_upload_time: int(time.Now().Unix()),
