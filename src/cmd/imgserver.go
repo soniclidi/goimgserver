@@ -16,7 +16,7 @@ import (
     "flag"
     "encoding/base64"
     "strings"
-
+    "bytes"
     "config"
     "mymime"
 
@@ -24,6 +24,7 @@ import (
     "gopkg.in/mgo.v2"
     "github.com/gin-gonic/gin"
     "gopkg.in/mgo.v2/bson"
+    "github.com/disintegration/imaging"
 )
 
 /*
@@ -153,7 +154,7 @@ type File struct {
     File_md5   string
     File_token string
     File_owner_id    string
-    File_dir_id      string
+    File_dir_id      bson.ObjectId
     File_upload_time int
 }
 
@@ -290,6 +291,69 @@ func main() {
             fmt.Println("file length is", fileLen)
 
             c.Data(http.StatusOK, contentType, C.GoBytes(unsafe.Pointer(C.out_file_buffer), C.int(file_length)))
+        } else {
+            c.JSON(http.StatusNotFound, gin.H{"result": "fail", "desc": "not found"})
+        }
+    })
+
+    router.GET("/getimage", func(c *gin.Context) {
+        formats := map[string]imaging.Format{
+            ".jpg":  imaging.JPEG,
+            ".jpeg": imaging.JPEG,
+            ".png":  imaging.PNG,
+            ".tif":  imaging.TIFF,
+            ".tiff": imaging.TIFF,
+            ".bmp":  imaging.BMP,
+            ".gif":  imaging.GIF,
+        }
+
+        width, err := strconv.Atoi(c.Query("width"))
+        if err != nil {
+            c.JSON(http.StatusBadRequest, gin.H{"result": "fail", "desc": "invalid parameter: width"})
+            return
+        }
+        height, err := strconv.Atoi(c.Query("height"))
+        if err != nil {
+            c.JSON(http.StatusBadRequest, gin.H{"result": "fail", "desc": "invalid parameter: height"})
+            return
+        }
+        if height <= 0 || width <= 0 {
+            c.JSON(http.StatusBadRequest, gin.H{"result": "fail", "desc": "invalid parameter: width and height"})
+            return
+        }
+
+        fileId := c.Query("file_id")
+        ext := strings.ToLower(path.Ext(fileId))
+        f, ok := formats[ext]
+        if !ok {
+            c.JSON(http.StatusBadRequest, gin.H{"result": "fail", "desc": "unsupported image format"})
+            return
+        }
+
+        fileIdStr := C.CString(fileId)
+        defer C.free(unsafe.Pointer(fileIdStr))
+        var file_length C.int64_t
+
+        result := int(C.fdfs_download_file(fileIdStr, &file_length))
+
+        if result == 0 {
+            defer C.free(unsafe.Pointer(C.out_file_buffer))
+
+            srcBuffer := bytes.NewBuffer(C.GoBytes(unsafe.Pointer(C.out_file_buffer), C.int(file_length)))
+            srcImage, err := imaging.Decode(srcBuffer)
+            if err != nil {
+                c.JSON(http.StatusBadRequest, gin.H{"result": "fail", "desc": "decode image file error"})
+                return
+            }
+
+            dstImage := imaging.Resize(srcImage, width, height, imaging.Lanczos)
+            dstBuffer := new(bytes.Buffer)
+            imaging.Encode(dstBuffer, dstImage, f)
+
+            c.Header("Content-Length", dstBuffer.Len())
+            contentType := mymime.TypeByExt(path.Ext(fileId)[1:])
+
+            c.Data(http.StatusOK, contentType, dstBuffer.Bytes())
         } else {
             c.JSON(http.StatusNotFound, gin.H{"result": "fail", "desc": "not found"})
         }
