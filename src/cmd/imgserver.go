@@ -153,10 +153,12 @@ type File struct {
     File_md5   string
     File_token string
     File_owner_id    string
+    File_dir_id      string
     File_upload_time int
 }
 
 var configFile = flag.String("conf", "./config.json", "the path of the config.")
+var collection mgo.Collection
 
 func main() {
     flag.Parse()
@@ -185,7 +187,7 @@ func main() {
     }
 
     db := mgo.DB(conf.DataBase.DB)
-    collection := db.C(conf.DataBase.Collection)
+    collection = db.C(conf.DataBase.Collection)
 
     router := gin.Default()
     html := template.Must(template.ParseFiles(conf.WebServer.Template))
@@ -204,57 +206,16 @@ func main() {
             log.Fatal(err)
         }
 
-        md5Ctx := md5.New()
-        md5Ctx.Write(buff)
-        md5Str := hex.EncodeToString(md5Ctx.Sum(nil))
-        fmt.Println("file md5:", md5Str)
+        ownerId := c.PostForm("owner_id")
+        dirId := c.PostForm("dir_id")
 
-        query := collection.Find(bson.M{"file_md5": md5Str})
-        count, _ := query.Count()
-
-        var result int = -1
-        var fileId string
-        //new file
-        if count == 0 {
-            extStr := C.CString(path.Ext(fileName)[1:])
-            defer C.free(unsafe.Pointer(extStr))
-            result = int(C.fdfs_upload_file((*C.char)(unsafe.Pointer(&buff[0])), C.int64_t(len(buff)), extStr))
-            if result == 0 {
-                fileId = C.GoString(&C.out_file_id[0])
-                fmt.Println("new file id:", fileId)
-            }
-        } else {
-            //get fileId from db
-            existFile := File{}
-            err = query.One(&existFile)
-            if err == nil {
-                fileId = existFile.File_id
-                fmt.Println("exist file id:", existFile.File_id)
-                result = 0
-            }
-        }
+        result, fileId, fileToken := doUpload(buff, fileName, ownerId, dirId)
 
         if result == 0 {
-            fileToken := genToken()
-            fmt.Println("file token:", fileToken)
-            newFile := &File{
-                File_id: fileId,
-                File_name: fileName,
-                File_owner_id: c.PostForm("owner_id"),
-                File_md5: md5Str,
-                File_token: fileToken,
-                File_upload_time: int(time.Now().Unix()),
-            }
-
-            dberr := collection.Insert(newFile)
-            if dberr != nil {
-                fmt.Println(err)
-                // to do: do something
-                c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "insert to db error",})
-            } else {
-                c.JSON(http.StatusOK, gin.H{"result": "success", "file_id": fileId, "file_token": fileToken,})
-            }
-        } else {
+            c.JSON(http.StatusOK, gin.H{"result": "success", "file_id": fileId, "file_token": fileToken,})
+        } else if result == -1 {
+            c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "insert to db error",})
+        } else if result == -2 {
             c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "upload file error",})
         }
 
@@ -353,4 +314,65 @@ func main() {
 func genToken() string {
     id := uuid.NewRandom()
     return strings.TrimRight(base64.URLEncoding.EncodeToString([]byte(id)), "=")
+}
+
+func doUpload(fileBuff []byte, fileName string, ownerId string, dirId string) (int, string, string) {
+    md5Ctx := md5.New()
+    md5Ctx.Write(fileBuff)
+    md5Str := hex.EncodeToString(md5Ctx.Sum(nil))
+    fmt.Println("file md5:", md5Str)
+
+    query := collection.Find(bson.M{"file_md5": md5Str})
+    count, _ := query.Count()
+
+    var result int = -1
+    var fileId string
+    //new file
+    if count == 0 {
+        extStr := C.CString(path.Ext(fileName)[1:])
+        defer C.free(unsafe.Pointer(extStr))
+        result = int(C.fdfs_upload_file((*C.char)(unsafe.Pointer(&fileBuff[0])), C.int64_t(len(fileBuff)), extStr))
+        if result == 0 {
+            fileId = C.GoString(&C.out_file_id[0])
+            fmt.Println("new file id:", fileId)
+        }
+    } else {
+        //get fileId from db
+        existFile := File{}
+        err := query.One(&existFile)
+        if err == nil {
+            fileId = existFile.File_id
+            fmt.Println("exist file id:", existFile.File_id)
+            result = 0
+        }
+    }
+
+    if result == 0 {
+        fileToken := genToken()
+        fmt.Println("file token:", fileToken)
+        newFile := &File{
+            File_id: fileId,
+            File_name: fileName,
+            File_owner_id: ownerId,
+            File_dir_id: dirId,
+            File_md5: md5Str,
+            File_token: fileToken,
+            File_upload_time: int(time.Now().Unix()),
+        }
+
+        dberr := collection.Insert(newFile)
+        if dberr != nil {
+            fmt.Println(dberr)
+            // to do: do something
+            return -1
+            //c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "insert to db error",})
+        } else {
+            return 0, fileId, fileToken
+            //c.JSON(http.StatusOK, gin.H{"result": "success", "file_id": fileId, "file_token": fileToken,})
+        }
+    } else {
+        return -2
+        //c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "upload file error",})
+    }
+
 }
