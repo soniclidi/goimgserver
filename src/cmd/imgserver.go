@@ -158,7 +158,7 @@ type File struct {
 }
 
 var configFile = flag.String("conf", "./config.json", "the path of the config.")
-var collection mgo.Collection
+var collection *mgo.Collection
 
 func main() {
     flag.Parse()
@@ -364,14 +364,14 @@ func doUpload(fileBuff []byte, fileName string, ownerId string, dirId string) (i
         if dberr != nil {
             fmt.Println(dberr)
             // to do: do something
-            return -1
+            return -1, "", ""
             //c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "insert to db error",})
         } else {
             return 0, fileId, fileToken
             //c.JSON(http.StatusOK, gin.H{"result": "success", "file_id": fileId, "file_token": fileToken,})
         }
     } else {
-        return -2
+        return -2, "", ""
         //c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "upload file error",})
     }
 
