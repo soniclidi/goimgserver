@@ -158,8 +158,18 @@ type File struct {
     File_upload_time int
 }
 
+type Dir struct {
+    Dir_id    bson.ObjectId `bson:"_id"`
+    Dir_name  string
+    Dir_level int
+    Parent_id bson.ObjectId
+    Dir_owner_id string
+}
+
 var configFile = flag.String("conf", "./config.json", "the path of the config.")
-var collection *mgo.Collection
+var rootDirId = "583fbc0d149f29904ec4f166"
+var filesCollection *mgo.Collection
+var dirsCollection  *mgo.Collection
 
 func main() {
     flag.Parse()
@@ -188,7 +198,8 @@ func main() {
     }
 
     db := mgo.DB(conf.DataBase.DB)
-    collection = db.C(conf.DataBase.Collection)
+    filesCollection = db.C(conf.DataBase.FilesCollection)
+    dirsCollection  = db.C(conf.DataBase.DirsCollection)
 
     router := gin.Default()
     html := template.Must(template.ParseFiles(conf.WebServer.Template))
@@ -199,6 +210,15 @@ func main() {
     })
 
     router.POST("/upload", func(c *gin.Context) {
+        dirId := c.PostForm("dir_id")
+        if len(dirId) == 0 {
+            dirId = rootDirId
+        }
+        if !bson.IsObjectIdHex(dirId) {
+            c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "invalid parameter: dir_id"})
+            return
+        }
+
         file, header, err := c.Request.FormFile("file")
         fileName := header.Filename
 
@@ -206,9 +226,7 @@ func main() {
         if err != nil {
             log.Fatal(err)
         }
-
         ownerId := c.PostForm("owner_id")
-        dirId := c.PostForm("dir_id")
 
         result, fileId, fileToken := doUpload(buff, fileName, ownerId, dirId)
 
@@ -222,162 +240,273 @@ func main() {
 
     })
 
-    router.GET("/delete", func(c *gin.Context) {
-        fileToken := c.Query("file_token")
-        fileId := c.Query("file_id")
-        fileIdStr := C.CString(fileId)
-        defer C.free(unsafe.Pointer(fileIdStr))
-
-        err := collection.Remove(bson.M{"file_token": fileToken, "file_id": fileId})
-
-        if err == nil {
-            count, _ := collection.Find(bson.M{"file_id": fileId}).Count()
-            if count == 0 {
-                result := int(C.fdfs_delete_file(fileIdStr))
-
-                if result == 0 {
-                    fmt.Println("delete file:", fileId)
-                    c.JSON(http.StatusOK, gin.H{"result": "success",})
-                } else {
-                    c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "delete file error",})
-                }
-            } else {
-                c.JSON(http.StatusOK, gin.H{"result": "success",})
-            }
-        } else {
-            c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "remove from db error",})
-        }
-
-    })
-
-    router.GET("/exist", func(c *gin.Context) {
-        md5 := c.Query("file_md5")
-        count, err := collection.Find(bson.M{"file_md5": md5}).Count()
-
-        if err != nil || count == 0 {
-            c.JSON(http.StatusOK, gin.H{"exist": "no",})
-        } else {
-            c.JSON(http.StatusOK, gin.H{"exist": "yes",})
-        }
-
-    })
-
-    router.GET("/get", func(c *gin.Context) {
-        fileId := c.Query("file_id")
-        fileIdStr := C.CString(fileId)
-        defer C.free(unsafe.Pointer(fileIdStr))
-        var file_length C.int64_t
-
-        result := int(C.fdfs_download_file(fileIdStr, &file_length))
-
-        if result == 0 {
-            defer C.free(unsafe.Pointer(C.out_file_buffer))
-            originalExt := c.Query("original_ext")
-            fileLen := int(file_length)
-            c.Header("Content-Length", strconv.Itoa(fileLen))
-
-            contentType := mymime.TypeByExt(path.Ext(fileId)[1:])
-            if originalExt == "true" {
-                fileToken := c.Query("file_token")
-                existFile := File{}
-                err := collection.Find(bson.M{"file_token": fileToken, "file_id": fileId}).One(&existFile)
-                if err == nil {
-                    contentType = mymime.TypeByExt(path.Ext(existFile.File_name)[1:])
-                }
-            }
-
-            fmt.Println("file id is", fileId)
-            fmt.Println("file content type is", contentType)
-            fmt.Println("file length is", fileLen)
-
-            c.Data(http.StatusOK, contentType, C.GoBytes(unsafe.Pointer(C.out_file_buffer), C.int(file_length)))
-        } else {
-            c.JSON(http.StatusNotFound, gin.H{"result": "fail", "desc": "not found"})
-        }
-    })
-
-    router.GET("/getimage", func(c *gin.Context) {
-        formats := map[string]imaging.Format{
-            ".jpg":  imaging.JPEG,
-            ".jpeg": imaging.JPEG,
-            ".png":  imaging.PNG,
-            ".tif":  imaging.TIFF,
-            ".tiff": imaging.TIFF,
-            ".bmp":  imaging.BMP,
-            ".gif":  imaging.GIF,
-        }
-
-        width, err := strconv.Atoi(c.Query("width"))
-        if err != nil {
-            c.JSON(http.StatusBadRequest, gin.H{"result": "fail", "desc": "invalid parameter: width"})
-            return
-        }
-        height, err := strconv.Atoi(c.Query("height"))
-        if err != nil {
-            c.JSON(http.StatusBadRequest, gin.H{"result": "fail", "desc": "invalid parameter: height"})
-            return
-        }
-        if height <= 0 || width <= 0 {
-            c.JSON(http.StatusBadRequest, gin.H{"result": "fail", "desc": "invalid parameter: width and height"})
-            return
-        }
-
-        fileId := c.Query("file_id")
-        ext := strings.ToLower(path.Ext(fileId))
-        f, ok := formats[ext]
-        if !ok {
-            c.JSON(http.StatusBadRequest, gin.H{"result": "fail", "desc": "unsupported image format"})
-            return
-        }
-
-        fileIdStr := C.CString(fileId)
-        defer C.free(unsafe.Pointer(fileIdStr))
-        var file_length C.int64_t
-
-        result := int(C.fdfs_download_file(fileIdStr, &file_length))
-
-        if result == 0 {
-            defer C.free(unsafe.Pointer(C.out_file_buffer))
-
-            srcBuffer := bytes.NewBuffer(C.GoBytes(unsafe.Pointer(C.out_file_buffer), C.int(file_length)))
-            srcImage, err := imaging.Decode(srcBuffer)
-            if err != nil {
-                c.JSON(http.StatusBadRequest, gin.H{"result": "fail", "desc": "decode image file error"})
-                return
-            }
-
-            dstImage := imaging.Resize(srcImage, width, height, imaging.Lanczos)
-            dstBuffer := new(bytes.Buffer)
-            imaging.Encode(dstBuffer, dstImage, f)
-
-            c.Header("Content-Length", strconv.Itoa(dstBuffer.Len()))
-            contentType := mymime.TypeByExt(path.Ext(fileId)[1:])
-
-            c.Data(http.StatusOK, contentType, dstBuffer.Bytes())
-        } else {
-            c.JSON(http.StatusNotFound, gin.H{"result": "fail", "desc": "not found"})
-        }
-    })
-
-    router.GET("/info", func(c *gin.Context) {
-        fileToken := c.Query("file_token")
-        existFile := File{}
-        err := collection.Find(bson.M{"file_token": fileToken}).One(&existFile)
-
-        if err == nil {
-            c.JSON(http.StatusOK, gin.H{"result": "success", "data": existFile,})
-        } else {
-            c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "get file info error",})
-        }
-
-    })
+    router.GET("/delete", doDelete)
+    router.GET("/exist", doExist)
+    router.GET("/get", doGet)
+    router.GET("/getimage", doGetImage)
+    router.GET("/info", doInfo)
+    router.GET("/mkdir", doMkDir)
+    router.GET("/rmdir", doRmDir)
+    router.GET("/listdir", doListDir)
+    router.GET("/listrootdir", doListRootDir)
 
     router.Run(":" + strconv.Itoa(conf.WebServer.Port))
 }
 
-func genToken() string {
-    id := uuid.NewRandom()
-    return strings.TrimRight(base64.URLEncoding.EncodeToString([]byte(id)), "=")
+func doDelete(c *gin.Context) {
+    fileToken := c.Query("file_token")
+    fileId := c.Query("file_id")
+    fileIdStr := C.CString(fileId)
+    defer C.free(unsafe.Pointer(fileIdStr))
+
+    err := filesCollection.Remove(bson.M{"file_token": fileToken, "file_id": fileId})
+
+    if err == nil {
+        count, _ := filesCollection.Find(bson.M{"file_id": fileId}).Count()
+        if count == 0 {
+            result := int(C.fdfs_delete_file(fileIdStr))
+
+            if result == 0 {
+                fmt.Println("delete file:", fileId)
+                c.JSON(http.StatusOK, gin.H{"result": "success",})
+            } else {
+                c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "delete file error",})
+            }
+        } else {
+            c.JSON(http.StatusOK, gin.H{"result": "success",})
+        }
+    } else {
+        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "remove from db error",})
+    }
+}
+
+func doExist(c *gin.Context) {
+    md5 := c.Query("file_md5")
+    count, err := filesCollection.Find(bson.M{"file_md5": md5}).Count()
+
+    if err != nil || count == 0 {
+        c.JSON(http.StatusOK, gin.H{"exist": "no",})
+    } else {
+        c.JSON(http.StatusOK, gin.H{"exist": "yes",})
+    }
+}
+
+func doGet(c *gin.Context) {
+    fileId := c.Query("file_id")
+    fileIdStr := C.CString(fileId)
+    defer C.free(unsafe.Pointer(fileIdStr))
+    var file_length C.int64_t
+
+    result := int(C.fdfs_download_file(fileIdStr, &file_length))
+
+    if result == 0 {
+        defer C.free(unsafe.Pointer(C.out_file_buffer))
+        originalExt := c.Query("original_ext")
+        fileLen := int(file_length)
+        c.Header("Content-Length", strconv.Itoa(fileLen))
+
+        contentType := mymime.TypeByExt(path.Ext(fileId)[1:])
+        if originalExt == "true" {
+            fileToken := c.Query("file_token")
+            existFile := File{}
+            err := filesCollection.Find(bson.M{"file_token": fileToken, "file_id": fileId}).One(&existFile)
+            if err == nil {
+                contentType = mymime.TypeByExt(path.Ext(existFile.File_name)[1:])
+            }
+        }
+
+        fmt.Println("file id is", fileId)
+        fmt.Println("file content type is", contentType)
+        fmt.Println("file length is", fileLen)
+
+        c.Data(http.StatusOK, contentType, C.GoBytes(unsafe.Pointer(C.out_file_buffer), C.int(file_length)))
+    } else {
+        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "not found"})
+    }
+}
+
+func doGetImage(c *gin.Context) {
+    formats := map[string]imaging.Format{
+        ".jpg":  imaging.JPEG,
+        ".jpeg": imaging.JPEG,
+        ".png":  imaging.PNG,
+        ".tif":  imaging.TIFF,
+        ".tiff": imaging.TIFF,
+        ".bmp":  imaging.BMP,
+        ".gif":  imaging.GIF,
+    }
+
+    width, err := strconv.Atoi(c.Query("width"))
+    if err != nil {
+        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "invalid parameter: width"})
+        return
+    }
+    height, err := strconv.Atoi(c.Query("height"))
+    if err != nil {
+        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "invalid parameter: height"})
+        return
+    }
+    if height <= 0 || width <= 0 {
+        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "invalid parameter: width or height"})
+        return
+    }
+
+    fileId := c.Query("file_id")
+    ext := strings.ToLower(path.Ext(fileId))
+    f, ok := formats[ext]
+    if !ok {
+        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "unsupported image format"})
+        return
+    }
+
+    fileIdStr := C.CString(fileId)
+    defer C.free(unsafe.Pointer(fileIdStr))
+    var file_length C.int64_t
+
+    result := int(C.fdfs_download_file(fileIdStr, &file_length))
+
+    if result == 0 {
+        defer C.free(unsafe.Pointer(C.out_file_buffer))
+
+        srcBuffer := bytes.NewBuffer(C.GoBytes(unsafe.Pointer(C.out_file_buffer), C.int(file_length)))
+        srcImage, err := imaging.Decode(srcBuffer)
+        if err != nil {
+            c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "decode image file error"})
+            return
+        }
+
+        dstImage := imaging.Resize(srcImage, width, height, imaging.Lanczos)
+        dstBuffer := new(bytes.Buffer)
+        imaging.Encode(dstBuffer, dstImage, f)
+
+        c.Header("Content-Length", strconv.Itoa(dstBuffer.Len()))
+        contentType := mymime.TypeByExt(path.Ext(fileId)[1:])
+
+        c.Data(http.StatusOK, contentType, dstBuffer.Bytes())
+    } else {
+        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "file not found"})
+    }
+}
+
+func doInfo(c *gin.Context) {
+    fileToken := c.Query("file_token")
+    existFile := File{}
+    err := filesCollection.Find(bson.M{"file_token": fileToken}).One(&existFile)
+
+    if err == nil {
+        c.JSON(http.StatusOK, gin.H{"result": "success", "data": existFile,})
+    } else {
+        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "get file info error",})
+    }
+}
+
+func doMkDir(c *gin.Context) {
+    dirName := c.Query("dir_name")
+    dirLevel, err := strconv.Atoi(c.Query("dir_level"))
+    if err != nil || dirLevel < 1 || dirLevel > 10 {
+        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "invalid parameter: dir_level"})
+        return
+    }
+    dirOwnerId := c.Query("dir_owner_id")
+    parentId := c.Query("parent_id")
+    if len(parentId) == 0 {
+        parentId = rootDirId
+    }
+    if !bson.IsObjectIdHex(parentId) {
+        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "invalid parameter: parent_id"})
+        return
+    }
+
+    parentObjId := bson.ObjectIdHex(parentId)
+    existDir := Dir{}
+    err = dirsCollection.Find(bson.M{"dir_name": dirName, "dir_level": dirLevel,
+        "dir_owner_id": dirOwnerId, "parent_id": parentObjId}).One(&existDir)
+
+    if err == nil {
+        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "dir already exist"})
+        return
+    }
+
+    dirId := bson.NewObjectId()
+    newDir := &Dir{
+        Dir_id: dirId,
+        Dir_name: dirName,
+        Dir_level: dirLevel,
+        Parent_id: parentObjId,
+        Dir_owner_id: dirOwnerId,
+    }
+
+    dberr := dirsCollection.Insert(newDir)
+    if dberr != nil {
+        fmt.Println(dberr)
+        // to do: do something
+
+        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "insert to db error",})
+    } else {
+        c.JSON(http.StatusOK, gin.H{"result": "success", "dir_id": dirId,})
+    }
+}
+
+func doRmDir(c *gin.Context) {
+    if !bson.IsObjectIdHex(c.Query("dir_id")) {
+        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "invalid parameter: dir_id"})
+        return
+    }
+    dirId := bson.ObjectIdHex(c.Query("dir_id"))
+
+    count, err := filesCollection.Find(bson.M{"file_dir_id": dirId}).Count()
+
+    if err == nil {
+        if count == 0 {
+            err = dirsCollection.Remove(bson.M{"_id": dirId, "dir_owner_id": c.Query("owner_id")})
+            if err == nil {
+                c.JSON(http.StatusOK, gin.H{"result": "success",})
+            } else {
+                c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "remove from db error",})
+            }
+        } else {
+            c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "can not remove a directory that contains files",})
+        }
+    } else {
+        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "db operaion error",})
+    }
+}
+
+func doListDir(c *gin.Context) {
+    if !bson.IsObjectIdHex(c.Query("dir_id")) {
+        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "invalid parameter: dir_id"})
+        return
+    }
+    dirId := bson.ObjectIdHex(c.Query("dir_id"))
+
+    existFiles := []File{}
+    ferr := filesCollection.Find(bson.M{"file_dir_id": dirId}).All(&existFiles)
+
+    existDirs := []Dir{}
+    derr := dirsCollection.Find(bson.M{"parent_id": dirId}).All(&existDirs)
+
+    if ferr == nil && derr == nil {
+        c.JSON(http.StatusOK, gin.H{"result": "success", "data": gin.H{"dirs": existDirs, "files": existFiles}})
+    } else {
+        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "get info from db error",})
+    }
+}
+
+func doListRootDir(c *gin.Context) {
+    owner_id := c.Query("owner_id")
+    dirId := bson.ObjectIdHex(rootDirId)
+
+    existFiles := []File{}
+    ferr := filesCollection.Find(bson.M{"file_dir_id": dirId, "file_owner_id": owner_id}).All(&existFiles)
+
+    existDirs := []Dir{}
+    derr := dirsCollection.Find(bson.M{"parent_id": dirId, "dir_owner_id": owner_id}).All(&existDirs)
+
+    if ferr == nil && derr == nil {
+        c.JSON(http.StatusOK, gin.H{"result": "success", "data": gin.H{"dirs": existDirs, "files": existFiles}})
+    } else {
+        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "get info from db error",})
+    }
 }
 
 func doUpload(fileBuff []byte, fileName string, ownerId string, dirId string) (int, string, string) {
@@ -386,7 +515,7 @@ func doUpload(fileBuff []byte, fileName string, ownerId string, dirId string) (i
     md5Str := hex.EncodeToString(md5Ctx.Sum(nil))
     fmt.Println("file md5:", md5Str)
 
-    query := collection.Find(bson.M{"file_md5": md5Str})
+    query := filesCollection.Find(bson.M{"file_md5": md5Str})
     count, _ := query.Count()
 
     var result int = -1
@@ -418,13 +547,13 @@ func doUpload(fileBuff []byte, fileName string, ownerId string, dirId string) (i
             File_id: fileId,
             File_name: fileName,
             File_owner_id: ownerId,
-            File_dir_id: bson.ObjectId(dirId),
+            File_dir_id: bson.ObjectIdHex(dirId),
             File_md5: md5Str,
             File_token: fileToken,
             File_upload_time: int(time.Now().Unix()),
         }
 
-        dberr := collection.Insert(newFile)
+        dberr := filesCollection.Insert(newFile)
         if dberr != nil {
             fmt.Println(dberr)
             // to do: do something
@@ -439,4 +568,9 @@ func doUpload(fileBuff []byte, fileName string, ownerId string, dirId string) (i
         //c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "upload file error",})
     }
 
+}
+
+func genToken() string {
+    id := uuid.NewRandom()
+    return strings.TrimRight(base64.URLEncoding.EncodeToString([]byte(id)), "=")
 }

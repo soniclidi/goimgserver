@@ -11,7 +11,8 @@ type DataBase struct {
     IP         string `json:"ip"`
     Port       int    `json:"port"`
     DB         string `json:"db"`
-    Collection string `json:"collection"`
+    FilesCollection string `json:"filescollection"`
+    DirsCollection  string `json:"dirscollection"`
 }
 
 type WebServer struct {

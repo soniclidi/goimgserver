@@ -7,7 +7,8 @@
     "ip": "192.168.1.106",
     "port": 27017,
     "db": "goimgserver",
-    "collection":"files"
+    "filescollection":"files",
+    "dirscollection":"dirs"
   },
 
   "webserver": {
