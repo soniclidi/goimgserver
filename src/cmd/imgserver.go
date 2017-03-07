@@ -179,7 +179,7 @@ func main() {
         panic(err)
     }
 
-    mymime.Load(conf.WebServer.MimeTypes)
+    err = mymime.Load(conf.WebServer.MimeTypes)
     if err != nil {
         fmt.Println("load mime types file error!")
     }
