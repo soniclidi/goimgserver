@@ -25,6 +25,7 @@ import (
     "github.com/gin-gonic/gin"
     "gopkg.in/mgo.v2/bson"
     "github.com/disintegration/imaging"
+    "gopkg.in/gin-contrib/cors.v1"
 )
 
 /*
@@ -202,6 +203,7 @@ func main() {
     dirsCollection  = db.C(conf.DataBase.DirsCollection)
 
     router := gin.Default()
+    router.Use(cors.Default())
     html := template.Must(template.ParseFiles(conf.WebServer.Template))
     router.SetHTMLTemplate(html)
 
