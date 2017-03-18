@@ -22,7 +22,7 @@ import (
 
     "github.com/pborman/uuid"
     "gopkg.in/mgo.v2"
-    "github.com/gin-gonic/gin"
+    "gopkg.in/gin-gonic/gin.v1"
     "gopkg.in/mgo.v2/bson"
     "github.com/disintegration/imaging"
     "gopkg.in/gin-contrib/cors.v1"
@@ -222,7 +222,11 @@ func main() {
         }
 
         file, header, err := c.Request.FormFile("file")
+        if header == nil {
+            fmt.Println("=======================null header")
+        }
         fileName := header.Filename
+
 
         buff, err := ioutil.ReadAll(file)
         if err != nil {
