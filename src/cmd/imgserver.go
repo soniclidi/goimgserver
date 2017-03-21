@@ -299,6 +299,13 @@ func doExist(c *gin.Context) {
 
 func doGet(c *gin.Context) {
     fileId := c.Query("file_id")
+    fmt.Println("get by file id: ", fileId)
+    if fileId == nil || fileId == "" {
+        fmt.Println("file id is nil")
+        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "not found"})
+        return
+    }
+
     fileIdStr := C.CString(fileId)
     defer C.free(unsafe.Pointer(fileIdStr))
     var file_length C.int64_t
