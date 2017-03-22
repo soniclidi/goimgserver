@@ -171,11 +171,13 @@ var configFile = flag.String("conf", "./config.json", "the path of the config.")
 var rootDirId = "583fbc0d149f29904ec4f166"
 var filesCollection *mgo.Collection
 var dirsCollection  *mgo.Collection
+var conf config.Config
 
 func main() {
     flag.Parse()
 
-    conf, err := config.Load(*configFile)
+    var err error
+    conf, err = config.Load(*configFile)
     if err != nil {
         panic(err)
     }
@@ -191,12 +193,6 @@ func main() {
     }
     defer mgo.Close()
 
-    confStr := C.CString(conf.FdfsClient.ConfigFile)
-    defer C.free(unsafe.Pointer(confStr))
-    result := int(C.init_fdfs(confStr))
-    if result != 0 {
-        panic("init fdfs error!")
-    }
 
     db := mgo.DB(conf.DataBase.DB)
     filesCollection = db.C(conf.DataBase.FilesCollection)
@@ -212,6 +208,12 @@ func main() {
     })
 
     router.POST("/upload", func(c *gin.Context) {
+        defer C.destroy_fdfs()
+        if initFdfs() == false {
+            c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "init fdfs error",})
+            return
+        }
+
         dirId := c.PostForm("dir_id")
         if len(dirId) == 0 {
             dirId = rootDirId
@@ -259,7 +261,24 @@ func main() {
     router.Run(":" + strconv.Itoa(conf.WebServer.Port))
 }
 
+
+func initFdfs() bool {
+    confStr := C.CString(conf.FdfsClient.ConfigFile)
+    defer C.free(unsafe.Pointer(confStr))
+    result := int(C.init_fdfs(confStr))
+    if result != 0 {
+        return false
+    }
+    return true
+}
+
 func doDelete(c *gin.Context) {
+    defer C.destroy_fdfs()
+    if initFdfs() == false {
+        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "init fdfs error",})
+        return
+    }
+
     fileToken := c.Query("file_token")
     fileId := c.Query("file_id")
     fileIdStr := C.CString(fileId)
@@ -298,6 +317,12 @@ func doExist(c *gin.Context) {
 }
 
 func doGet(c *gin.Context) {
+    defer C.destroy_fdfs()
+    if initFdfs() == false {
+        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "init fdfs error",})
+        return
+    }
+
     fileId := c.Query("file_id")
     fmt.Println("get by file id: ", fileId)
     if fileId == "" {
@@ -339,6 +364,12 @@ func doGet(c *gin.Context) {
 }
 
 func doGetImage(c *gin.Context) {
+    defer C.destroy_fdfs()
+    if initFdfs() == false {
+        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "init fdfs error",})
+        return
+    }
+
     formats := map[string]imaging.Format{
         ".jpg":  imaging.JPEG,
         ".jpeg": imaging.JPEG,
