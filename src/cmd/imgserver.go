@@ -22,10 +22,10 @@ import (
 
     "github.com/pborman/uuid"
     "gopkg.in/mgo.v2"
-    "gopkg.in/gin-gonic/gin.v1"
+    "github.com/gin-gonic/gin"
     "gopkg.in/mgo.v2/bson"
     "github.com/disintegration/imaging"
-    "gopkg.in/gin-contrib/cors.v1"
+    "github.com/gin-contrib/cors"
 )
 
 /*
@@ -171,7 +171,7 @@ var configFile = flag.String("conf", "./config.json", "the path of the config.")
 var rootDirId = "583fbc0d149f29904ec4f166"
 var filesCollection *mgo.Collection
 var dirsCollection  *mgo.Collection
-var conf config.Config
+var conf *config.Config
 
 func main() {
     flag.Parse()
