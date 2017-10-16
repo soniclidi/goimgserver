@@ -199,7 +199,12 @@ func main() {
     dirsCollection  = db.C(conf.DataBase.DirsCollection)
 
     router := gin.Default()
-    router.Use(cors.Default())
+
+    corsConfig := cors.DefaultConfig()
+    corsConfig.AllowAllOrigins = true
+    corsConfig.AddAllowHeaders("authorization")
+
+    router.Use(cors.New(corsConfig))
     html := template.Must(template.ParseFiles(conf.WebServer.Template))
     router.SetHTMLTemplate(html)
 
