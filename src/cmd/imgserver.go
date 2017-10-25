@@ -26,6 +26,7 @@ import (
     "gopkg.in/mgo.v2/bson"
     "github.com/disintegration/imaging"
     "github.com/gin-contrib/cors"
+    "sync"
 )
 
 /*
@@ -66,34 +67,36 @@ void destroy_fdfs()
 int fdfs_upload_file(char *file_buff, int64_t file_size, char *ext_name, char *out_file_id)
 {
 	char group_name[FDFS_GROUP_NAME_MAX_LEN + 1];
-	ConnectionInfo *pTrackerServer;
+	ConnectionInfo pTrackerServer;
+	ConnectionInfo *conn;
 	int result;
 	int store_path_index;
 	ConnectionInfo storageServer;
 
-	pTrackerServer = tracker_get_connection();
-	if (pTrackerServer == NULL)
+	//conn = tracker_get_connection();
+	conn = tracker_get_connection_r(&pTrackerServer, &result);
+	if (conn == NULL)
 	{
 		return errno != 0 ? errno : ECONNREFUSED;
 	}
 
 	*group_name = '\0';
-	if ((result = tracker_query_storage_store(pTrackerServer, \
+	if ((result = tracker_query_storage_store(conn, \
 	                &storageServer, group_name, &store_path_index)) != 0)
 	{
 		return result;
 	}
 
-	//result = storage_upload_by_filename1(pTrackerServer, \
+	//result = storage_upload_by_filename1(conn, \
 	//		&storageServer, store_path_index, \
 	//		local_filename, NULL, \
 	//		NULL, 0, group_name, out_file_id);
-	result = storage_upload_by_filebuff1(pTrackerServer, \
+	result = storage_upload_by_filebuff1(conn, \
 			&storageServer, store_path_index, \
 			file_buff, file_size, ext_name, \
 			NULL, 0, group_name, out_file_id);
 
-	tracker_disconnect_server_ex(pTrackerServer, true);
+	tracker_disconnect_server_ex(conn, true);
 
 	return result;
 }
@@ -101,13 +104,15 @@ int fdfs_upload_file(char *file_buff, int64_t file_size, char *ext_name, char *o
 
 int fdfs_download_file(char *file_id, int64_t *file_size, char **out_file_buffer)
 {
-	ConnectionInfo *pTrackerServer;
+	ConnectionInfo pTrackerServer;
+	ConnectionInfo *conn;
 	int result;
 	int64_t file_offset;
 	int64_t download_bytes;
 
-	pTrackerServer = tracker_get_connection();
-	if (pTrackerServer == NULL)
+	//conn = tracker_get_connection();
+	conn = tracker_get_connection_r(&pTrackerServer, &result);
+	if (conn == NULL)
 	{
 		return errno != 0 ? errno : ECONNREFUSED;
 	}
@@ -115,12 +120,12 @@ int fdfs_download_file(char *file_id, int64_t *file_size, char **out_file_buffer
 	file_offset = 0;
 	download_bytes = 0;
 
-	result = storage_do_download_file1_ex(pTrackerServer, \
+	result = storage_do_download_file1_ex(conn, \
                 NULL, FDFS_DOWNLOAD_TO_BUFF, file_id, \
                 file_offset, download_bytes, \
                 out_file_buffer, NULL, file_size);
 
-	tracker_disconnect_server_ex(pTrackerServer, true);
+	tracker_disconnect_server_ex(conn, true);
 
 	return result;
 }
@@ -128,18 +133,20 @@ int fdfs_download_file(char *file_id, int64_t *file_size, char **out_file_buffer
 
 int fdfs_delete_file(char *file_id)
 {
-	ConnectionInfo *pTrackerServer;
+	ConnectionInfo pTrackerServer;
+	ConnectionInfo *conn;
 	int result;
 
-	pTrackerServer = tracker_get_connection();
-	if (pTrackerServer == NULL)
+	//conn = tracker_get_connection();
+	conn = tracker_get_connection_r(&pTrackerServer, &result);
+	if (conn == NULL)
 	{
 		return errno != 0 ? errno : ECONNREFUSED;
 	}
 
-	result = storage_delete_file1(pTrackerServer, NULL, file_id);
+	result = storage_delete_file1(conn, NULL, file_id);
 
-	tracker_disconnect_server_ex(pTrackerServer, true);
+	tracker_disconnect_server_ex(conn, true);
 
 	return result;
 }
@@ -173,6 +180,8 @@ var filesCollection *mgo.Collection
 var dirsCollection  *mgo.Collection
 var conf *config.Config
 
+var lock sync.Mutex
+
 func main() {
     flag.Parse()
 
@@ -180,6 +189,11 @@ func main() {
     conf, err = config.Load(*configFile)
     if err != nil {
         panic(err)
+    }
+
+    defer C.destroy_fdfs()
+    if initFdfs() == false {
+        panic("init fdfs error")
     }
 
     err = mymime.Load(conf.WebServer.MimeTypes)
@@ -213,11 +227,11 @@ func main() {
     })
 
     router.POST("/upload", func(c *gin.Context) {
-        defer C.destroy_fdfs()
-        if initFdfs() == false {
-            c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "init fdfs error",})
-            return
-        }
+        //defer C.destroy_fdfs()
+        //if initFdfs() == false {
+        //    c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "init fdfs error",})
+        //    return
+        //}
 
         dirId := c.PostForm("dir_id")
         if len(dirId) == 0 {
@@ -278,11 +292,13 @@ func initFdfs() bool {
 }
 
 func doDelete(c *gin.Context) {
-    defer C.destroy_fdfs()
-    if initFdfs() == false {
-        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "init fdfs error",})
-        return
-    }
+    //defer C.destroy_fdfs()
+    //if initFdfs() == false {
+    //    c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "init fdfs error",})
+    //    return
+    //}
+    //defer lock.Unlock()
+    //lock.Lock()
 
     fileToken := c.Query("file_token")
     fileId := c.Query("file_id")
@@ -322,11 +338,13 @@ func doExist(c *gin.Context) {
 }
 
 func doGet(c *gin.Context) {
-    defer C.destroy_fdfs()
-    if initFdfs() == false {
-        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "init fdfs error",})
-        return
-    }
+    //defer C.destroy_fdfs()
+    //if initFdfs() == false {
+    //    c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "init fdfs error",})
+    //    return
+    //}
+    //defer lock.Unlock()
+    //lock.Lock()
 
     fileId := c.Query("file_id")
     fmt.Println("get by file id: ", fileId)
@@ -371,11 +389,13 @@ func doGet(c *gin.Context) {
 }
 
 func doGetImage(c *gin.Context) {
-    defer C.destroy_fdfs()
-    if initFdfs() == false {
-        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "init fdfs error",})
-        return
-    }
+    //defer C.destroy_fdfs()
+    //if initFdfs() == false {
+    //    c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "init fdfs error",})
+    //    return
+    //}
+    //defer lock.Unlock()
+    //lock.Lock()
 
     formats := map[string]imaging.Format{
         ".jpg":  imaging.JPEG,
@@ -563,6 +583,9 @@ func doListRootDir(c *gin.Context) {
 }
 
 func doUpload(fileBuff []byte, fileName string, ownerId string, dirId string) (int, string, string) {
+    //defer lock.Unlock()
+    //lock.Lock()
+
     md5Ctx := md5.New()
     md5Ctx.Write(fileBuff)
     md5Str := hex.EncodeToString(md5Ctx.Sum(nil))
