@@ -3,7 +3,6 @@ package main
 
 import (
     "fmt"
-    "log"
     "net/http"
     "html/template"
     "unsafe"
@@ -17,16 +16,16 @@ import (
     "encoding/base64"
     "strings"
     "bytes"
+    "errors"
+
     "config"
     "mymime"
-
     "github.com/pborman/uuid"
     "gopkg.in/mgo.v2"
     "github.com/gin-gonic/gin"
     "gopkg.in/mgo.v2/bson"
     "github.com/disintegration/imaging"
     "github.com/gin-contrib/cors"
-    "sync"
 )
 
 /*
@@ -95,6 +94,53 @@ int fdfs_upload_file(char *file_buff, int64_t file_size, char *ext_name, char *o
 			&storageServer, store_path_index, \
 			file_buff, file_size, ext_name, \
 			NULL, 0, group_name, out_file_id);
+
+	tracker_disconnect_server_ex(conn, true);
+
+	return result;
+}
+
+int fdfs_upload_image_file(char *file_buff, int64_t file_size, char *thumb_buff, int64_t thumb_size, \
+        char *prefix_name, char *ext_name, char *out_file_id, char *thumb_file_id)
+{
+	char group_name[FDFS_GROUP_NAME_MAX_LEN + 1];
+	ConnectionInfo pTrackerServer;
+	ConnectionInfo *conn;
+	int result;
+	int store_path_index;
+	ConnectionInfo storageServer;
+
+	//conn = tracker_get_connection();
+	conn = tracker_get_connection_r(&pTrackerServer, &result);
+	if (conn == NULL)
+	{
+		return errno != 0 ? errno : ECONNREFUSED;
+	}
+
+	*group_name = '\0';
+	if ((result = tracker_query_storage_store(conn, &storageServer, group_name, &store_path_index)) != 0)
+	{
+		return result;
+	}
+
+	result = storage_upload_by_filebuff1(conn, \
+			&storageServer, store_path_index, \
+			file_buff, file_size, ext_name, \
+			NULL, 0, group_name, out_file_id);
+
+	if (result != 0)
+	{
+	    return result;
+	}
+
+	result = storage_upload_slave_by_filebuff1(conn, &storageServer, thumb_buff, thumb_size, out_file_id, \
+	        prefix_name, ext_name, NULL, 0, thumb_file_id);
+
+	if (result != 0)
+	{
+	    storage_delete_file1(conn, NULL, out_file_id);
+	    return result;
+	}
 
 	tracker_disconnect_server_ex(conn, true);
 
@@ -174,13 +220,16 @@ type Dir struct {
     Dir_owner_id string
 }
 
+var thumbFileWidth  = 100
+var thumbFileHeight = 80
+var thumbFilePrefix = "_thumb_100x80"
+
 var configFile = flag.String("conf", "./config.json", "the path of the config.")
 var rootDirId = "583fbc0d149f29904ec4f166"
 var filesCollection *mgo.Collection
 var dirsCollection  *mgo.Collection
 var conf *config.Config
 
-var lock sync.Mutex
 
 func main() {
     flag.Parse()
@@ -226,56 +275,19 @@ func main() {
         c.HTML(http.StatusOK, "upload.tmpl", nil)
     })
 
-    router.POST("/upload", func(c *gin.Context) {
-        //defer C.destroy_fdfs()
-        //if initFdfs() == false {
-        //    c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "init fdfs error",})
-        //    return
-        //}
 
-        dirId := c.PostForm("dir_id")
-        if len(dirId) == 0 {
-            dirId = rootDirId
-        }
-        if !bson.IsObjectIdHex(dirId) {
-            c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "invalid parameter: dir_id"})
-            return
-        }
-
-        file, header, err := c.Request.FormFile("file")
-        if header == nil {
-            fmt.Println("=======================null header")
-        }
-        fileName := header.Filename
-
-
-        buff, err := ioutil.ReadAll(file)
-        if err != nil {
-            log.Fatal(err)
-        }
-        ownerId := c.PostForm("owner_id")
-
-        result, fileId, fileToken := doUpload(buff, fileName, ownerId, dirId)
-
-        if result == 0 {
-            c.JSON(http.StatusOK, gin.H{"result": "success", "file_id": fileId, "file_token": fileToken,})
-        } else if result == -1 {
-            c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "insert to db error",})
-        } else if result == -2 {
-            c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "upload file error",})
-        }
-
-    })
+    //router.POST("/upload_image", doUploadImage)
+    router.POST("/upload", doUpload)
 
     router.GET("/delete", doDelete)
     router.GET("/exist", doExist)
     router.GET("/get", doGet)
-    router.GET("/getimage", doGetImage)
+    router.GET("/get_image", doGetImage)
     router.GET("/info", doInfo)
-    router.GET("/mkdir", doMkDir)
-    router.GET("/rmdir", doRmDir)
-    router.GET("/listdir", doListDir)
-    router.GET("/listrootdir", doListRootDir)
+    router.GET("/mk_dir", doMkDir)
+    router.GET("/rm_dir", doRmDir)
+    router.GET("/list_dir", doListDir)
+    router.GET("/list_root_dir", doListRootDir)
 
     router.Run(":" + strconv.Itoa(conf.WebServer.Port))
 }
@@ -291,15 +303,56 @@ func initFdfs() bool {
     return true
 }
 
-func doDelete(c *gin.Context) {
-    //defer C.destroy_fdfs()
-    //if initFdfs() == false {
-    //    c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "init fdfs error",})
-    //    return
-    //}
-    //defer lock.Unlock()
-    //lock.Lock()
+func doUpload(c *gin.Context) {
+    dirId := c.PostForm("dir_id")
+    if len(dirId) == 0 {
+        dirId = rootDirId
+    }
+    if !bson.IsObjectIdHex(dirId) {
+        errorResponse(c, "invalid parameter: dir_id")
+        return
+    }
 
+    file, header, err := c.Request.FormFile("file")
+    if header == nil {
+        errorResponse(c, "null http header")
+        return
+    }
+    fileName := header.Filename
+
+    buff, err := ioutil.ReadAll(file)
+    if err != nil {
+        fmt.Println(err)
+        errorResponse(c, "read file error")
+        return
+    }
+
+    ownerId := c.PostForm("owner_id")
+    isImage := false
+    if c.PostForm("image") == "true" {
+        isImage = true
+    }
+
+    err, fileId, fileToken := uploadFile(buff, fileName, ownerId, dirId, isImage)
+    if err == nil {
+        successResponse(c, gin.H{"file_id": fileId, "file_token": fileToken,})
+    } else {
+        fmt.Println(err.Error())
+        errorResponse(c, err.Error())
+    }
+
+    //result, fileId, fileToken := uploadFile(buff, fileName, ownerId, dirId)
+    //
+    //if result == 0 {
+    //    successResponse(c, gin.H{"file_id": fileId, "file_token": fileToken,})
+    //} else if result == -1 {
+    //    errorResponse(c, "insert to db error")
+    //} else if result == -2 {
+    //    errorResponse(c, "upload file error")
+    //}
+}
+
+func doDelete(c *gin.Context) {
     fileToken := c.Query("file_token")
     fileId := c.Query("file_id")
     fileIdStr := C.CString(fileId)
@@ -314,15 +367,15 @@ func doDelete(c *gin.Context) {
 
             if result == 0 {
                 fmt.Println("delete file:", fileId)
-                c.JSON(http.StatusOK, gin.H{"result": "success",})
+                successResponse(c, nil)
             } else {
-                c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "delete file error",})
+                errorResponse(c, "delete file error")
             }
         } else {
-            c.JSON(http.StatusOK, gin.H{"result": "success",})
+            successResponse(c, nil)
         }
     } else {
-        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "remove from db error",})
+        errorResponse(c, "remove from db error")
     }
 }
 
@@ -330,38 +383,28 @@ func doExist(c *gin.Context) {
     md5 := c.Query("file_md5")
     count, err := filesCollection.Find(bson.M{"file_md5": md5}).Count()
 
+    exist := "true"
     if err != nil || count == 0 {
-        c.JSON(http.StatusOK, gin.H{"exist": "no",})
-    } else {
-        c.JSON(http.StatusOK, gin.H{"exist": "yes",})
+        exist = "false"
     }
+
+    successResponse(c, gin.H{"exist": exist})
 }
 
 func doGet(c *gin.Context) {
-    //defer C.destroy_fdfs()
-    //if initFdfs() == false {
-    //    c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "init fdfs error",})
-    //    return
-    //}
-    //defer lock.Unlock()
-    //lock.Lock()
-
     fileId := c.Query("file_id")
     fmt.Println("get by file id: ", fileId)
     if fileId == "" {
-        fmt.Println("file id is empty")
-        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "not found"})
+        errorResponse(c, "file not found")
         return
     }
 
     fileIdStr := C.CString(fileId)
     defer C.free(unsafe.Pointer(fileIdStr))
     var file_length C.int64_t
-
     var out_file_buffer *C.char
 
     result := int(C.fdfs_download_file(fileIdStr, &file_length, &out_file_buffer))
-
     if result == 0 {
         defer C.free(unsafe.Pointer(out_file_buffer))
         originalExt := c.Query("original_ext")
@@ -384,19 +427,11 @@ func doGet(c *gin.Context) {
 
         c.Data(http.StatusOK, contentType, C.GoBytes(unsafe.Pointer(out_file_buffer), C.int(file_length)))
     } else {
-        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "not found"})
+        errorResponse(c, "file not found")
     }
 }
 
 func doGetImage(c *gin.Context) {
-    //defer C.destroy_fdfs()
-    //if initFdfs() == false {
-    //    c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "init fdfs error",})
-    //    return
-    //}
-    //defer lock.Unlock()
-    //lock.Lock()
-
     formats := map[string]imaging.Format{
         ".jpg":  imaging.JPEG,
         ".jpeg": imaging.JPEG,
@@ -409,16 +444,16 @@ func doGetImage(c *gin.Context) {
 
     width, err := strconv.Atoi(c.Query("width"))
     if err != nil {
-        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "invalid parameter: width"})
+        errorResponse(c, "invalid parameter: width")
         return
     }
     height, err := strconv.Atoi(c.Query("height"))
     if err != nil {
-        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "invalid parameter: height"})
+        errorResponse(c, "invalid parameter: height")
         return
     }
     if height <= 0 || width <= 0 {
-        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "invalid parameter: width or height"})
+        errorResponse(c, "invalid parameter: width or height")
         return
     }
 
@@ -426,25 +461,23 @@ func doGetImage(c *gin.Context) {
     ext := strings.ToLower(path.Ext(fileId))
     f, ok := formats[ext]
     if !ok {
-        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "unsupported image format"})
+        errorResponse(c, "unsupported image format")
         return
     }
 
     fileIdStr := C.CString(fileId)
     defer C.free(unsafe.Pointer(fileIdStr))
     var file_length C.int64_t
-
     var out_file_buffer *C.char
 
     result := int(C.fdfs_download_file(fileIdStr, &file_length, &out_file_buffer))
-
     if result == 0 {
         defer C.free(unsafe.Pointer(out_file_buffer))
 
         srcBuffer := bytes.NewBuffer(C.GoBytes(unsafe.Pointer(out_file_buffer), C.int(file_length)))
         srcImage, err := imaging.Decode(srcBuffer)
         if err != nil {
-            c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "decode image file error"})
+            errorResponse(c, "decode image file error")
             return
         }
 
@@ -457,7 +490,7 @@ func doGetImage(c *gin.Context) {
 
         c.Data(http.StatusOK, contentType, dstBuffer.Bytes())
     } else {
-        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "file not found"})
+        errorResponse(c, "file not found")
     }
 }
 
@@ -467,9 +500,9 @@ func doInfo(c *gin.Context) {
     err := filesCollection.Find(bson.M{"file_token": fileToken}).One(&existFile)
 
     if err == nil {
-        c.JSON(http.StatusOK, gin.H{"result": "success", "data": existFile,})
+        successResponse(c, existFile)
     } else {
-        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "get file info error",})
+        errorResponse(c, "get file info error")
     }
 }
 
@@ -477,7 +510,7 @@ func doMkDir(c *gin.Context) {
     dirName := c.Query("dir_name")
     dirLevel, err := strconv.Atoi(c.Query("dir_level"))
     if err != nil || dirLevel < 1 || dirLevel > 10 {
-        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "invalid parameter: dir_level"})
+        errorResponse(c, "invalid parameter: dir_level")
         return
     }
     dirOwnerId := c.Query("dir_owner_id")
@@ -486,7 +519,7 @@ func doMkDir(c *gin.Context) {
         parentId = rootDirId
     }
     if !bson.IsObjectIdHex(parentId) {
-        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "invalid parameter: parent_id"})
+        errorResponse(c, "invalid parameter: parent_id")
         return
     }
 
@@ -496,7 +529,7 @@ func doMkDir(c *gin.Context) {
         "dir_owner_id": dirOwnerId, "parent_id": parentObjId}).One(&existDir)
 
     if err == nil {
-        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "dir already exist"})
+        errorResponse(c, "dir already exist")
         return
     }
 
@@ -514,40 +547,39 @@ func doMkDir(c *gin.Context) {
         fmt.Println(dberr)
         // to do: do something
 
-        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "insert to db error",})
+        errorResponse(c, "insert to db error")
     } else {
-        c.JSON(http.StatusOK, gin.H{"result": "success", "dir_id": dirId,})
+        successResponse(c, gin.H{"dir_id": dirId,})
     }
 }
 
 func doRmDir(c *gin.Context) {
     if !bson.IsObjectIdHex(c.Query("dir_id")) {
-        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "invalid parameter: dir_id"})
+        errorResponse(c, "invalid parameter: dir_id")
         return
     }
     dirId := bson.ObjectIdHex(c.Query("dir_id"))
 
     count, err := filesCollection.Find(bson.M{"file_dir_id": dirId}).Count()
-
     if err == nil {
         if count == 0 {
             err = dirsCollection.Remove(bson.M{"_id": dirId, "dir_owner_id": c.Query("owner_id")})
             if err == nil {
-                c.JSON(http.StatusOK, gin.H{"result": "success",})
+                successResponse(c, nil)
             } else {
-                c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "remove from db error",})
+                errorResponse(c, "remove from db error")
             }
         } else {
-            c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "can not remove a directory that contains files",})
+            errorResponse(c, "can not remove a directory that contains files")
         }
     } else {
-        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "db operaion error",})
+        errorResponse(c, "db operaion error")
     }
 }
 
 func doListDir(c *gin.Context) {
     if !bson.IsObjectIdHex(c.Query("dir_id")) {
-        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "invalid parameter: dir_id"})
+        errorResponse(c, "invalid parameter: dir_id")
         return
     }
     dirId := bson.ObjectIdHex(c.Query("dir_id"))
@@ -559,9 +591,9 @@ func doListDir(c *gin.Context) {
     derr := dirsCollection.Find(bson.M{"parent_id": dirId}).All(&existDirs)
 
     if ferr == nil && derr == nil {
-        c.JSON(http.StatusOK, gin.H{"result": "success", "data": gin.H{"dirs": existDirs, "files": existFiles}})
+        successResponse(c, gin.H{"dirs": existDirs, "files": existFiles})
     } else {
-        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "get info from db error",})
+        errorResponse(c, "get info from db error")
     }
 }
 
@@ -576,13 +608,13 @@ func doListRootDir(c *gin.Context) {
     derr := dirsCollection.Find(bson.M{"parent_id": dirId, "dir_owner_id": owner_id}).All(&existDirs)
 
     if ferr == nil && derr == nil {
-        c.JSON(http.StatusOK, gin.H{"result": "success", "data": gin.H{"dirs": existDirs, "files": existFiles}})
+        successResponse(c, gin.H{"dirs": existDirs, "files": existFiles})
     } else {
-        c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "get info from db error",})
+        errorResponse(c, "get info from db error")
     }
 }
 
-func doUpload(fileBuff []byte, fileName string, ownerId string, dirId string) (int, string, string) {
+func uploadFile(fileBuff []byte, fileName string, ownerId string, dirId string, isImage bool) (error, string, string) {
     //defer lock.Unlock()
     //lock.Lock()
 
@@ -594,18 +626,58 @@ func doUpload(fileBuff []byte, fileName string, ownerId string, dirId string) (i
     query := filesCollection.Find(bson.M{"file_md5": md5Str})
     count, _ := query.Count()
 
-    var result int = -1
+    var result int = 1
     var fileId string
+    var thumbFileId string
     //new file
     if count == 0 {
         extStr := C.CString(path.Ext(fileName)[1:])
         defer C.free(unsafe.Pointer(extStr))
+
         var fileIdBuff [256]byte
-        result = int(C.fdfs_upload_file((*C.char)(unsafe.Pointer(&fileBuff[0])), C.int64_t(len(fileBuff)), extStr,
-            (*C.char)(unsafe.Pointer(&fileIdBuff[0]))))
+        var thumbFileIdBuff [256]byte
+        if isImage {
+            prefixStr := C.CString(thumbFilePrefix)
+            defer C.free(unsafe.Pointer(prefixStr))
+
+            formats := map[string]imaging.Format{
+                ".jpg":  imaging.JPEG,
+                ".jpeg": imaging.JPEG,
+                ".png":  imaging.PNG,
+                ".tif":  imaging.TIFF,
+                ".tiff": imaging.TIFF,
+                ".bmp":  imaging.BMP,
+                ".gif":  imaging.GIF,
+            }
+            ext := strings.ToLower(path.Ext(fileName))
+            f, ok := formats[ext]
+            if !ok {
+                return errors.New("unsupported image format"), "", ""
+            }
+
+            srcBuffer := bytes.NewBuffer(fileBuff)
+            srcImage, err := imaging.Decode(srcBuffer)
+            if err != nil {
+                return errors.New("decode image file error"), "", ""
+            }
+            dstImage := imaging.Resize(srcImage, thumbFileWidth, thumbFileHeight, imaging.Lanczos)
+            thumbBuffer := new(bytes.Buffer)
+            imaging.Encode(thumbBuffer, dstImage, f)
+
+            result = int (C.fdfs_upload_image_file((*C.char)(unsafe.Pointer(&fileBuff[0])), C.int64_t(len(fileBuff)),
+                (*C.char)(unsafe.Pointer(&(thumbBuffer.Bytes()[0]))), C.int64_t(thumbBuffer.Len()),
+                prefixStr, extStr, (*C.char)(unsafe.Pointer(&fileIdBuff[0])),
+                (*C.char)(unsafe.Pointer(&thumbFileIdBuff[0]))))
+        } else {
+            result = int(C.fdfs_upload_file((*C.char)(unsafe.Pointer(&fileBuff[0])), C.int64_t(len(fileBuff)), extStr,
+                (*C.char)(unsafe.Pointer(&fileIdBuff[0]))))
+        }
+
         if result == 0 {
             fileId = byte2String(fileIdBuff[:])
             fmt.Println("new file id:", fileId)
+            thumbFileId = byte2String(thumbFileIdBuff[:])
+            fmt.Println("new thumb file id:", thumbFileId)
         }
     } else {
         //get fileId from db
@@ -635,15 +707,12 @@ func doUpload(fileBuff []byte, fileName string, ownerId string, dirId string) (i
         if dberr != nil {
             fmt.Println(dberr)
             // to do: do something
-            return -1, "", ""
-            //c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "insert to db error",})
+            return errors.New("insert to db error"), "", ""
         } else {
-            return 0, fileId, fileToken
-            //c.JSON(http.StatusOK, gin.H{"result": "success", "file_id": fileId, "file_token": fileToken,})
+            return nil, fileId, fileToken
         }
     } else {
-        return -2, "", ""
-        //c.JSON(http.StatusOK, gin.H{"result": "fail", "desc": "upload file error",})
+        return errors.New("upload file error"), "", ""
     }
 
 }
@@ -660,4 +729,12 @@ func byte2String(p []byte) string {
         }
     }
     return string(p)
+}
+
+func successResponse(c *gin.Context, data interface{}) {
+    c.JSON(http.StatusOK, gin.H{"result": "success", "data": data,})
+}
+
+func errorResponse(c *gin.Context, desc string) {
+    c.JSON(http.StatusOK, gin.H{"result": "error", "desc": desc,})
 }
