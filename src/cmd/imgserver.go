@@ -328,12 +328,12 @@ func doUpload(c *gin.Context) {
     }
 
     ownerId := c.PostForm("owner_id")
-    isImage := false
-    if c.PostForm("image") == "true" {
-        isImage = true
+    genThumb := false
+    if c.PostForm("thumb") == "true" {
+        genThumb = true
     }
 
-    err, fileId, fileToken := uploadFile(buff, fileName, ownerId, dirId, isImage)
+    err, fileId, fileToken := uploadFile(buff, fileName, ownerId, dirId, genThumb)
     if err == nil {
         successResponse(c, gin.H{"file_id": fileId, "file_token": fileToken,})
     } else {
@@ -614,7 +614,7 @@ func doListRootDir(c *gin.Context) {
     }
 }
 
-func uploadFile(fileBuff []byte, fileName string, ownerId string, dirId string, isImage bool) (error, string, string) {
+func uploadFile(fileBuff []byte, fileName string, ownerId string, dirId string, genThumb bool) (error, string, string) {
     //defer lock.Unlock()
     //lock.Lock()
 
@@ -636,7 +636,7 @@ func uploadFile(fileBuff []byte, fileName string, ownerId string, dirId string, 
 
         var fileIdBuff [256]byte
         var thumbFileIdBuff [256]byte
-        if isImage {
+        if genThumb {
             prefixStr := C.CString(thumbFilePrefix)
             defer C.free(unsafe.Pointer(prefixStr))
 
