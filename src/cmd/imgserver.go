@@ -224,6 +224,16 @@ var thumbFileWidth  = 100
 var thumbFileHeight = 80
 var thumbFilePrefix = "_thumb_100x80"
 
+var imageFormats = map[string]imaging.Format{
+".jpg":  imaging.JPEG,
+".jpeg": imaging.JPEG,
+".png":  imaging.PNG,
+".tif":  imaging.TIFF,
+".tiff": imaging.TIFF,
+".bmp":  imaging.BMP,
+".gif":  imaging.GIF,
+}
+
 var configFile = flag.String("conf", "./config.json", "the path of the config.")
 var rootDirId = "583fbc0d149f29904ec4f166"
 var filesCollection *mgo.Collection
@@ -432,16 +442,6 @@ func doGet(c *gin.Context) {
 }
 
 func doGetImage(c *gin.Context) {
-    formats := map[string]imaging.Format{
-        ".jpg":  imaging.JPEG,
-        ".jpeg": imaging.JPEG,
-        ".png":  imaging.PNG,
-        ".tif":  imaging.TIFF,
-        ".tiff": imaging.TIFF,
-        ".bmp":  imaging.BMP,
-        ".gif":  imaging.GIF,
-    }
-
     width, err := strconv.Atoi(c.Query("width"))
     if err != nil {
         errorResponse(c, "invalid parameter: width")
@@ -459,7 +459,7 @@ func doGetImage(c *gin.Context) {
 
     fileId := c.Query("file_id")
     ext := strings.ToLower(path.Ext(fileId))
-    f, ok := formats[ext]
+    f, ok := imageFormats[ext]
     if !ok {
         errorResponse(c, "unsupported image format")
         return
@@ -640,17 +640,8 @@ func uploadFile(fileBuff []byte, fileName string, ownerId string, dirId string, 
             prefixStr := C.CString(thumbFilePrefix)
             defer C.free(unsafe.Pointer(prefixStr))
 
-            formats := map[string]imaging.Format{
-                ".jpg":  imaging.JPEG,
-                ".jpeg": imaging.JPEG,
-                ".png":  imaging.PNG,
-                ".tif":  imaging.TIFF,
-                ".tiff": imaging.TIFF,
-                ".bmp":  imaging.BMP,
-                ".gif":  imaging.GIF,
-            }
             ext := strings.ToLower(path.Ext(fileName))
-            f, ok := formats[ext]
+            f, ok := imageFormats[ext]
             if !ok {
                 return errors.New("unsupported image format"), "", ""
             }
