@@ -225,13 +225,13 @@ var thumbFileHeight = 80
 var thumbFilePrefix = "_thumb_100x80"
 
 var imageFormats = map[string]imaging.Format{
-".jpg":  imaging.JPEG,
-".jpeg": imaging.JPEG,
-".png":  imaging.PNG,
-".tif":  imaging.TIFF,
-".tiff": imaging.TIFF,
-".bmp":  imaging.BMP,
-".gif":  imaging.GIF,
+    ".jpg":  imaging.JPEG,
+    ".jpeg": imaging.JPEG,
+    ".png":  imaging.PNG,
+    ".tif":  imaging.TIFF,
+    ".tiff": imaging.TIFF,
+    ".bmp":  imaging.BMP,
+    ".gif":  imaging.GIF,
 }
 
 var configFile = flag.String("conf", "./config.json", "the path of the config.")
@@ -267,7 +267,8 @@ func main() {
     defer mgo.Close()
 
 
-    db := mgo.DB(conf.DataBase.DB)
+    copyMgo := mgo.Copy()
+    db := copyMgo.DB(conf.DataBase.DB)
     filesCollection = db.C(conf.DataBase.FilesCollection)
     dirsCollection  = db.C(conf.DataBase.DirsCollection)
 
