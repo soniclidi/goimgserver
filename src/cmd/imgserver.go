@@ -223,6 +223,7 @@ type Dir struct {
 var thumbFileWidth  = 100
 var thumbFileHeight = 80
 var thumbFilePrefix = "_thumb_100x80"
+var rootDirId = "583fbc0d149f29904ec4f166"
 
 var imageFormats = map[string]imaging.Format{
     ".jpg":  imaging.JPEG,
@@ -235,11 +236,13 @@ var imageFormats = map[string]imaging.Format{
 }
 
 var configFile = flag.String("conf", "./config.json", "the path of the config.")
-var rootDirId = "583fbc0d149f29904ec4f166"
-var filesCollection *mgo.Collection
-var dirsCollection  *mgo.Collection
 var conf *config.Config
 
+var (
+    mgoSession      *mgo.Session
+    //filesCollection *mgo.Collection
+    //dirsCollection  *mgo.Collection
+)
 
 func main() {
     flag.Parse()
@@ -260,17 +263,11 @@ func main() {
         fmt.Println("load mime types file error!")
     }
 
-    mgo, err := mgo.Dial(conf.DataBase.IP + ":" + strconv.Itoa(conf.DataBase.Port))
+    mgoSession, err = mgo.Dial(conf.DataBase.IP + ":" + strconv.Itoa(conf.DataBase.Port))
     if err != nil {
         panic(err)
     }
-    defer mgo.Close()
-
-
-    copyMgo := mgo.Copy()
-    db := copyMgo.DB(conf.DataBase.DB)
-    filesCollection = db.C(conf.DataBase.FilesCollection)
-    dirsCollection  = db.C(conf.DataBase.DirsCollection)
+    defer mgoSession.Close()
 
     router := gin.Default()
 
@@ -369,6 +366,7 @@ func doDelete(c *gin.Context) {
     fileIdStr := C.CString(fileId)
     defer C.free(unsafe.Pointer(fileIdStr))
 
+    filesCollection, _ := getFilesAndDirs()
     err := filesCollection.Remove(bson.M{"file_token": fileToken, "file_id": fileId})
 
     if err == nil {
@@ -392,6 +390,7 @@ func doDelete(c *gin.Context) {
 
 func doExist(c *gin.Context) {
     md5 := c.Query("file_md5")
+    filesCollection, _ := getFilesAndDirs()
     count, err := filesCollection.Find(bson.M{"file_md5": md5}).Count()
 
     exist := "true"
@@ -426,6 +425,7 @@ func doGet(c *gin.Context) {
         if originalExt == "true" {
             fileToken := c.Query("file_token")
             existFile := File{}
+            filesCollection, _ := getFilesAndDirs()
             err := filesCollection.Find(bson.M{"file_token": fileToken, "file_id": fileId}).One(&existFile)
             if err == nil {
                 contentType = mymime.TypeByExt(path.Ext(existFile.File_name)[1:])
@@ -498,6 +498,7 @@ func doGetImage(c *gin.Context) {
 func doInfo(c *gin.Context) {
     fileToken := c.Query("file_token")
     existFile := File{}
+    filesCollection, _ := getFilesAndDirs()
     err := filesCollection.Find(bson.M{"file_token": fileToken}).One(&existFile)
 
     if err == nil {
@@ -526,6 +527,7 @@ func doMkDir(c *gin.Context) {
 
     parentObjId := bson.ObjectIdHex(parentId)
     existDir := Dir{}
+    _, dirsCollection := getFilesAndDirs()
     err = dirsCollection.Find(bson.M{"dir_name": dirName, "dir_level": dirLevel,
         "dir_owner_id": dirOwnerId, "parent_id": parentObjId}).One(&existDir)
 
@@ -561,6 +563,7 @@ func doRmDir(c *gin.Context) {
     }
     dirId := bson.ObjectIdHex(c.Query("dir_id"))
 
+    filesCollection, dirsCollection := getFilesAndDirs()
     count, err := filesCollection.Find(bson.M{"file_dir_id": dirId}).Count()
     if err == nil {
         if count == 0 {
@@ -584,6 +587,7 @@ func doListDir(c *gin.Context) {
         return
     }
     dirId := bson.ObjectIdHex(c.Query("dir_id"))
+    filesCollection, dirsCollection := getFilesAndDirs()
 
     existFiles := []File{}
     ferr := filesCollection.Find(bson.M{"file_dir_id": dirId}).All(&existFiles)
@@ -601,6 +605,7 @@ func doListDir(c *gin.Context) {
 func doListRootDir(c *gin.Context) {
     owner_id := c.Query("owner_id")
     dirId := bson.ObjectIdHex(rootDirId)
+    filesCollection, dirsCollection := getFilesAndDirs()
 
     existFiles := []File{}
     ferr := filesCollection.Find(bson.M{"file_dir_id": dirId, "file_owner_id": owner_id}).All(&existFiles)
@@ -624,6 +629,7 @@ func uploadFile(fileBuff []byte, fileName string, ownerId string, dirId string, 
     md5Str := hex.EncodeToString(md5Ctx.Sum(nil))
     fmt.Println("file md5:", md5Str)
 
+    filesCollection, _ := getFilesAndDirs()
     query := filesCollection.Find(bson.M{"file_md5": md5Str})
     count, _ := query.Count()
 
@@ -707,6 +713,15 @@ func uploadFile(fileBuff []byte, fileName string, ownerId string, dirId string, 
         return errors.New("upload file error"), "", ""
     }
 
+}
+
+func getFilesAndDirs() (files *mgo.Collection, dirs *mgo.Collection) {
+    copySession := mgoSession.Copy()
+    db := copySession.DB(conf.DataBase.DB)
+    files = db.C(conf.DataBase.FilesCollection)
+    dirs  = db.C(conf.DataBase.DirsCollection)
+
+    return
 }
 
 func genToken() string {
