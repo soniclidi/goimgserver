@@ -92,7 +92,7 @@ application/mp4					mp4s
 application/mpeg4-generic
 application/mpeg4-iod
 application/mpeg4-iod-xmt
-application/msword				doc dot
+application/msword				doc dot docx
 application/mxf					mxf
 application/nasdata
 application/news-transmission

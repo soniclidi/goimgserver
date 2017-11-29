@@ -224,6 +224,7 @@ var thumbFileWidth  = 100
 var thumbFileHeight = 80
 var thumbFilePrefix = "_thumb_100x80"
 var rootDirId = "583fbc0d149f29904ec4f166"
+var maxDirLevel = 10
 
 var imageFormats = map[string]imaging.Format{
     ".jpg":  imaging.JPEG,
@@ -240,8 +241,6 @@ var conf *config.Config
 
 var (
     mgoSession      *mgo.Session
-    //filesCollection *mgo.Collection
-    //dirsCollection  *mgo.Collection
 )
 
 func main() {
@@ -284,7 +283,6 @@ func main() {
     })
 
 
-    //router.POST("/upload_image", doUploadImage)
     router.POST("/upload", doUpload)
 
     router.GET("/delete", doDelete)
@@ -336,28 +334,22 @@ func doUpload(c *gin.Context) {
     }
 
     ownerId := c.PostForm("owner_id")
+    distinct := false
+    if c.PostForm("distinct") == "true" {
+        distinct = true
+    }
     genThumb := false
     if c.PostForm("thumb") == "true" {
         genThumb = true
     }
 
-    err, fileId, fileToken := uploadFile(buff, fileName, ownerId, dirId, genThumb)
+    err, fileId, fileToken := uploadFile(buff, fileName, ownerId, dirId, distinct, genThumb)
     if err == nil {
         successResponse(c, gin.H{"file_id": fileId, "file_token": fileToken,})
     } else {
         fmt.Println(err.Error())
         errorResponse(c, err.Error())
     }
-
-    //result, fileId, fileToken := uploadFile(buff, fileName, ownerId, dirId)
-    //
-    //if result == 0 {
-    //    successResponse(c, gin.H{"file_id": fileId, "file_token": fileToken,})
-    //} else if result == -1 {
-    //    errorResponse(c, "insert to db error")
-    //} else if result == -2 {
-    //    errorResponse(c, "upload file error")
-    //}
 }
 
 func doDelete(c *gin.Context) {
@@ -389,9 +381,9 @@ func doDelete(c *gin.Context) {
 }
 
 func doExist(c *gin.Context) {
-    md5 := c.Query("file_md5")
+    fileMd5 := c.Query("file_md5")
     filesCollection, _ := getFilesAndDirs()
-    count, err := filesCollection.Find(bson.M{"file_md5": md5}).Count()
+    count, err := filesCollection.Find(bson.M{"file_md5": fileMd5}).Count()
 
     exist := "true"
     if err != nil || count == 0 {
@@ -409,6 +401,13 @@ func doGet(c *gin.Context) {
         return
     }
 
+    disposition := "attachment"
+    ext := strings.ToLower(path.Ext(fileId))
+    _, ok := imageFormats[ext]
+    if ok {
+        disposition = "inline"
+    }
+
     fileIdStr := C.CString(fileId)
     defer C.free(unsafe.Pointer(fileIdStr))
     var file_length C.int64_t
@@ -417,20 +416,29 @@ func doGet(c *gin.Context) {
     result := int(C.fdfs_download_file(fileIdStr, &file_length, &out_file_buffer))
     if result == 0 {
         defer C.free(unsafe.Pointer(out_file_buffer))
-        originalExt := c.Query("original_ext")
+        //originalExt := c.Query("original_ext")
         fileLen := int(file_length)
         c.Header("Content-Length", strconv.Itoa(fileLen))
 
-        contentType := mymime.TypeByExt(path.Ext(fileId)[1:])
-        if originalExt == "true" {
-            fileToken := c.Query("file_token")
-            existFile := File{}
-            filesCollection, _ := getFilesAndDirs()
-            err := filesCollection.Find(bson.M{"file_token": fileToken, "file_id": fileId}).One(&existFile)
-            if err == nil {
-                contentType = mymime.TypeByExt(path.Ext(existFile.File_name)[1:])
-            }
+        fileName := fileId
+        existFile := File{}
+        filesCollection, _ := getFilesAndDirs()
+        err := filesCollection.Find(bson.M{"file_id": fileId}).One(&existFile)
+        if err == nil {
+            fileName = existFile.File_name
         }
+        c.Header("Content-Disposition", disposition + ";filename=" + fileName + ";filename*=utf-8''" + fileName)
+
+        contentType := mymime.TypeByExt(ext[1:])
+        //if originalExt == "true" {
+        //    fileToken := c.Query("file_token")
+        //    existFile := File{}
+        //    filesCollection, _ := getFilesAndDirs()
+        //    err := filesCollection.Find(bson.M{"file_token": fileToken, "file_id": fileId}).One(&existFile)
+        //    if err == nil {
+        //        contentType = mymime.TypeByExt(strings.ToLower(path.Ext(existFile.File_name)[1:]))
+        //    }
+        //}
 
         fmt.Println("file id is", fileId)
         fmt.Println("file content type is", contentType)
@@ -511,7 +519,7 @@ func doInfo(c *gin.Context) {
 func doMkDir(c *gin.Context) {
     dirName := c.Query("dir_name")
     dirLevel, err := strconv.Atoi(c.Query("dir_level"))
-    if err != nil || dirLevel < 1 || dirLevel > 10 {
+    if err != nil || dirLevel < 1 || dirLevel > maxDirLevel {
         errorResponse(c, "invalid parameter: dir_level")
         return
     }
@@ -526,11 +534,18 @@ func doMkDir(c *gin.Context) {
     }
 
     parentObjId := bson.ObjectIdHex(parentId)
-    existDir := Dir{}
     _, dirsCollection := getFilesAndDirs()
+
+    existParentDir := Dir{}
+    err = dirsCollection.Find(bson.M{"dir_id": parentObjId}).One(&existParentDir)
+    if err != nil {
+        errorResponse(c, "parent dir doesn't exist")
+        return
+    }
+
+    existDir := Dir{}
     err = dirsCollection.Find(bson.M{"dir_name": dirName, "dir_level": dirLevel,
         "dir_owner_id": dirOwnerId, "parent_id": parentObjId}).One(&existDir)
-
     if err == nil {
         errorResponse(c, "dir already exist")
         return
@@ -548,8 +563,6 @@ func doMkDir(c *gin.Context) {
     dberr := dirsCollection.Insert(newDir)
     if dberr != nil {
         fmt.Println(dberr)
-        // to do: do something
-
         errorResponse(c, "insert to db error")
     } else {
         successResponse(c, gin.H{"dir_id": dirId,})
@@ -577,7 +590,7 @@ func doRmDir(c *gin.Context) {
             errorResponse(c, "can not remove a directory that contains files")
         }
     } else {
-        errorResponse(c, "db operaion error")
+        errorResponse(c, "db operation error")
     }
 }
 
@@ -589,10 +602,10 @@ func doListDir(c *gin.Context) {
     dirId := bson.ObjectIdHex(c.Query("dir_id"))
     filesCollection, dirsCollection := getFilesAndDirs()
 
-    existFiles := []File{}
+    var existFiles []File
     ferr := filesCollection.Find(bson.M{"file_dir_id": dirId}).All(&existFiles)
 
-    existDirs := []Dir{}
+    var existDirs []Dir
     derr := dirsCollection.Find(bson.M{"parent_id": dirId}).All(&existDirs)
 
     if ferr == nil && derr == nil {
@@ -603,15 +616,15 @@ func doListDir(c *gin.Context) {
 }
 
 func doListRootDir(c *gin.Context) {
-    owner_id := c.Query("owner_id")
+    ownerId := c.Query("owner_id")
     dirId := bson.ObjectIdHex(rootDirId)
     filesCollection, dirsCollection := getFilesAndDirs()
 
-    existFiles := []File{}
-    ferr := filesCollection.Find(bson.M{"file_dir_id": dirId, "file_owner_id": owner_id}).All(&existFiles)
+    var existFiles []File
+    ferr := filesCollection.Find(bson.M{"file_dir_id": dirId, "file_owner_id": ownerId}).All(&existFiles)
 
-    existDirs := []Dir{}
-    derr := dirsCollection.Find(bson.M{"parent_id": dirId, "dir_owner_id": owner_id}).All(&existDirs)
+    var existDirs []Dir
+    derr := dirsCollection.Find(bson.M{"parent_id": dirId, "dir_owner_id": ownerId}).All(&existDirs)
 
     if ferr == nil && derr == nil {
         successResponse(c, gin.H{"dirs": existDirs, "files": existFiles})
@@ -620,10 +633,7 @@ func doListRootDir(c *gin.Context) {
     }
 }
 
-func uploadFile(fileBuff []byte, fileName string, ownerId string, dirId string, genThumb bool) (error, string, string) {
-    //defer lock.Unlock()
-    //lock.Lock()
-
+func uploadFile(fileBuff []byte, fileName string, ownerId string, dirId string, distinct bool, genThumb bool) (error, string, string) {
     md5Ctx := md5.New()
     md5Ctx.Write(fileBuff)
     md5Str := hex.EncodeToString(md5Ctx.Sum(nil))
@@ -633,11 +643,11 @@ func uploadFile(fileBuff []byte, fileName string, ownerId string, dirId string, 
     query := filesCollection.Find(bson.M{"file_md5": md5Str})
     count, _ := query.Count()
 
-    var result int = 1
+    var result = 1
     var fileId string
     var thumbFileId string
     //new file
-    if count == 0 {
+    if count == 0 || distinct == false {
         extStr := C.CString(path.Ext(fileName)[1:])
         defer C.free(unsafe.Pointer(extStr))
 
