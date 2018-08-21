@@ -343,7 +343,22 @@ func doUpload(c *gin.Context) {
         genThumb = true
     }
 
-    err, fileId, fileToken := uploadFile(buff, fileName, ownerId, dirId, distinct, genThumb)
+    width, err := strconv.Atoi(c.PostForm("width"))
+    if genThumb == true && err != nil {
+        errorResponse(c, "invalid parameter: width")
+        return
+    }
+    height, err := strconv.Atoi(c.PostForm("height"))
+    if genThumb == true && err != nil {
+        errorResponse(c, "invalid parameter: height")
+        return
+    }
+    if genThumb == true && (height <= 0 || width <= 0) {
+        errorResponse(c, "invalid parameter: width or height")
+        return
+    }
+
+    err, fileId, fileToken := uploadFile(buff, fileName, ownerId, dirId, distinct, genThumb, width, height)
     if err == nil {
         successResponse(c, gin.H{"file_id": fileId, "file_token": fileToken,})
     } else {
@@ -416,29 +431,23 @@ func doGet(c *gin.Context) {
     result := int(C.fdfs_download_file(fileIdStr, &file_length, &out_file_buffer))
     if result == 0 {
         defer C.free(unsafe.Pointer(out_file_buffer))
-        //originalExt := c.Query("original_ext")
+
+        fmt.Println("downloaded file from fdfs.")
         fileLen := int(file_length)
         c.Header("Content-Length", strconv.Itoa(fileLen))
 
         fileName := fileId
         existFile := File{}
         filesCollection, _ := getFilesAndDirs()
+        fmt.Println("filecollection got.")
         err := filesCollection.Find(bson.M{"file_id": fileId}).One(&existFile)
+        fmt.Println("filecollection find.")
         if err == nil {
             fileName = existFile.File_name
         }
         c.Header("Content-Disposition", disposition + ";filename=" + fileName + ";filename*=utf-8''" + fileName)
 
         contentType := mymime.TypeByExt(ext[1:])
-        //if originalExt == "true" {
-        //    fileToken := c.Query("file_token")
-        //    existFile := File{}
-        //    filesCollection, _ := getFilesAndDirs()
-        //    err := filesCollection.Find(bson.M{"file_token": fileToken, "file_id": fileId}).One(&existFile)
-        //    if err == nil {
-        //        contentType = mymime.TypeByExt(strings.ToLower(path.Ext(existFile.File_name)[1:]))
-        //    }
-        //}
 
         fmt.Println("file id is", fileId)
         fmt.Println("file content type is", contentType)
@@ -504,10 +513,10 @@ func doGetImage(c *gin.Context) {
 }
 
 func doInfo(c *gin.Context) {
-    fileToken := c.Query("file_token")
+    fileId := c.Query("file_id")
     existFile := File{}
     filesCollection, _ := getFilesAndDirs()
-    err := filesCollection.Find(bson.M{"file_token": fileToken}).One(&existFile)
+    err := filesCollection.Find(bson.M{"file_id": fileId}).One(&existFile)
 
     if err == nil {
         successResponse(c, existFile)
@@ -633,7 +642,9 @@ func doListRootDir(c *gin.Context) {
     }
 }
 
-func uploadFile(fileBuff []byte, fileName string, ownerId string, dirId string, distinct bool, genThumb bool) (error, string, string) {
+//func uploadFile(fileBuff []byte, fileName string, ownerId string, dirId string, distinct bool, genThumb bool) (error, string, string) {
+func uploadFile(fileBuff []byte, fileName string, ownerId string, dirId string, distinct bool, genThumb bool,
+    width int, height int) (error, string, string) {
     md5Ctx := md5.New()
     md5Ctx.Write(fileBuff)
     md5Str := hex.EncodeToString(md5Ctx.Sum(nil))
@@ -642,6 +653,13 @@ func uploadFile(fileBuff []byte, fileName string, ownerId string, dirId string, 
     filesCollection, _ := getFilesAndDirs()
     query := filesCollection.Find(bson.M{"file_md5": md5Str})
     count, _ := query.Count()
+
+    if width <= 0 {
+        width = thumbFileWidth
+    }
+    if height <= 0 {
+        height = thumbFileHeight
+    }
 
     var result = 1
     var fileId string
@@ -668,7 +686,7 @@ func uploadFile(fileBuff []byte, fileName string, ownerId string, dirId string, 
             if err != nil {
                 return errors.New("decode image file error"), "", ""
             }
-            dstImage := imaging.Resize(srcImage, thumbFileWidth, thumbFileHeight, imaging.Lanczos)
+            dstImage := imaging.Resize(srcImage, width, height, imaging.Lanczos)
             thumbBuffer := new(bytes.Buffer)
             imaging.Encode(thumbBuffer, dstImage, f)
 
