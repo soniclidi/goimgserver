@@ -345,13 +345,15 @@ func doUpload(c *gin.Context) {
 
     width, err := strconv.Atoi(c.PostForm("width"))
     if genThumb == true && err != nil {
-        errorResponse(c, "invalid parameter: width")
-        return
+        //errorResponse(c, "invalid parameter: width")
+        //return
+        width = thumbFileWidth
     }
     height, err := strconv.Atoi(c.PostForm("height"))
     if genThumb == true && err != nil {
-        errorResponse(c, "invalid parameter: height")
-        return
+        //errorResponse(c, "invalid parameter: height")
+        //return
+        height = thumbFileHeight
     }
     if genThumb == true && (height <= 0 || width <= 0) {
         errorResponse(c, "invalid parameter: width or height")
@@ -745,6 +747,8 @@ func uploadFile(fileBuff []byte, fileName string, ownerId string, dirId string, 
 
 func getFilesAndDirs() (files *mgo.Collection, dirs *mgo.Collection) {
     copySession := mgoSession.Copy()
+    defer copySession.Close()
+
     db := copySession.DB(conf.DataBase.DB)
     files = db.C(conf.DataBase.FilesCollection)
     dirs  = db.C(conf.DataBase.DirsCollection)
