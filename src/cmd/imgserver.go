@@ -375,7 +375,9 @@ func doDelete(c *gin.Context) {
     fileIdStr := C.CString(fileId)
     defer C.free(unsafe.Pointer(fileIdStr))
 
-    filesCollection, _ := getFilesAndDirs()
+    session, filesCollection, _ := getFilesAndDirs()
+    defer session.Close()
+
     err := filesCollection.Remove(bson.M{"file_token": fileToken, "file_id": fileId})
 
     if err == nil {
@@ -399,7 +401,9 @@ func doDelete(c *gin.Context) {
 
 func doExist(c *gin.Context) {
     fileMd5 := c.Query("file_md5")
-    filesCollection, _ := getFilesAndDirs()
+    session, filesCollection, _ := getFilesAndDirs()
+    defer session.Close()
+
     count, err := filesCollection.Find(bson.M{"file_md5": fileMd5}).Count()
 
     exist := "true"
@@ -440,7 +444,9 @@ func doGet(c *gin.Context) {
 
         fileName := fileId
         existFile := File{}
-        filesCollection, _ := getFilesAndDirs()
+        session, filesCollection, _ := getFilesAndDirs()
+        defer session.Close()
+
         fmt.Println("filecollection got.")
         err := filesCollection.Find(bson.M{"file_id": fileId}).One(&existFile)
         fmt.Println("filecollection find.")
@@ -517,7 +523,9 @@ func doGetImage(c *gin.Context) {
 func doInfo(c *gin.Context) {
     fileId := c.Query("file_id")
     existFile := File{}
-    filesCollection, _ := getFilesAndDirs()
+    session, filesCollection, _ := getFilesAndDirs()
+    defer session.Close()
+
     err := filesCollection.Find(bson.M{"file_id": fileId}).One(&existFile)
 
     if err == nil {
@@ -545,7 +553,8 @@ func doMkDir(c *gin.Context) {
     }
 
     parentObjId := bson.ObjectIdHex(parentId)
-    _, dirsCollection := getFilesAndDirs()
+    session, _, dirsCollection := getFilesAndDirs()
+    defer session.Close()
 
     existParentDir := Dir{}
     err = dirsCollection.Find(bson.M{"dir_id": parentObjId}).One(&existParentDir)
@@ -587,7 +596,9 @@ func doRmDir(c *gin.Context) {
     }
     dirId := bson.ObjectIdHex(c.Query("dir_id"))
 
-    filesCollection, dirsCollection := getFilesAndDirs()
+    session, filesCollection, dirsCollection := getFilesAndDirs()
+    defer session.Close()
+
     count, err := filesCollection.Find(bson.M{"file_dir_id": dirId}).Count()
     if err == nil {
         if count == 0 {
@@ -611,7 +622,8 @@ func doListDir(c *gin.Context) {
         return
     }
     dirId := bson.ObjectIdHex(c.Query("dir_id"))
-    filesCollection, dirsCollection := getFilesAndDirs()
+    session, filesCollection, dirsCollection := getFilesAndDirs()
+    defer session.Close()
 
     var existFiles []File
     ferr := filesCollection.Find(bson.M{"file_dir_id": dirId}).All(&existFiles)
@@ -629,7 +641,8 @@ func doListDir(c *gin.Context) {
 func doListRootDir(c *gin.Context) {
     ownerId := c.Query("owner_id")
     dirId := bson.ObjectIdHex(rootDirId)
-    filesCollection, dirsCollection := getFilesAndDirs()
+    session, filesCollection, dirsCollection := getFilesAndDirs()
+    defer session.Close()
 
     var existFiles []File
     ferr := filesCollection.Find(bson.M{"file_dir_id": dirId, "file_owner_id": ownerId}).All(&existFiles)
@@ -652,7 +665,9 @@ func uploadFile(fileBuff []byte, fileName string, ownerId string, dirId string, 
     md5Str := hex.EncodeToString(md5Ctx.Sum(nil))
     fmt.Println("file md5:", md5Str)
 
-    filesCollection, _ := getFilesAndDirs()
+    session, filesCollection, _ := getFilesAndDirs()
+    defer session.Close()
+
     query := filesCollection.Find(bson.M{"file_md5": md5Str})
     count, _ := query.Count()
 
@@ -745,11 +760,10 @@ func uploadFile(fileBuff []byte, fileName string, ownerId string, dirId string, 
 
 }
 
-func getFilesAndDirs() (files *mgo.Collection, dirs *mgo.Collection) {
-    copySession := mgoSession.Copy()
-    defer copySession.Close()
+func getFilesAndDirs() (session *mgo.Session, files *mgo.Collection, dirs *mgo.Collection) {
+    session = mgoSession.Copy()
 
-    db := copySession.DB(conf.DataBase.DB)
+    db := session.DB(conf.DataBase.DB)
     files = db.C(conf.DataBase.FilesCollection)
     dirs  = db.C(conf.DataBase.DirsCollection)
 
